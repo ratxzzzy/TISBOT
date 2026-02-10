@@ -45,7 +45,6 @@ export class CopyTrader {
     logger.info("   Polymarket CopyTrader Bot Starting   ");
     logger.info("========================================");
     logger.info(`Target wallet: ${shortAddress(config.walletToCopy)}`);
-    logger.budget(`Total budget: ${formatUsd(config.totalBudgetUsdc)}`);
     logger.info(`Min trade: ${formatUsd(config.minTradeSizeUsdc)} | Max trade: ${formatUsd(config.maxSingleTradeUsdc)}`);
     logger.info(`Slippage tolerance: ${config.slippageTolerance}%`);
 
@@ -175,8 +174,8 @@ export class CopyTrader {
     const result = await executeTrade(originalTrade, scaledAmountUsdc);
 
     if (result.success) {
-      // Update budget
-      this.portfolio.updateBudget(
+      // Refresh cached balance from chain
+      await this.portfolio.updateBudget(
         result.executedAmountUsdc,
         originalTrade.tradeType === "BUY"
       );
