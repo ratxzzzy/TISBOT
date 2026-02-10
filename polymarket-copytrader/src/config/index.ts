@@ -38,7 +38,7 @@ export const config = {
 
   // Budget
   totalBudgetUsdc: parseFloat(optionalEnv("TOTAL_BUDGET_USDC", "400")),
-  minTradeSizeUsdc: parseFloat(optionalEnv("MIN_TRADE_SIZE_USDC", "1")),
+  minTradeSizeUsdc: parseFloat(optionalEnv("MIN_TRADE_SIZE_USDC", "0.10")),
   maxSingleTradeUsdc: parseFloat(optionalEnv("MAX_SINGLE_TRADE_USDC", "5")),
 
   // Trading
