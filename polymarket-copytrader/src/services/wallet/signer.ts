@@ -6,7 +6,8 @@ import { shortAddress } from "../../utils/helpers";
 let walletInstance: ethers.Wallet | null = null;
 
 /**
- * Creates and returns a wallet signer connected to the Polygon HTTP provider.
+ * Creates and returns the EOA wallet signer connected to the Polygon HTTP provider.
+ * This EOA is an owner of the Gnosis Safe and signs orders on its behalf.
  * Singleton pattern: only creates one instance.
  */
 export function getWallet(): ethers.Wallet {
@@ -18,19 +19,29 @@ export function getWallet(): ethers.Wallet {
     : `0x${config.privateKey}`;
 
   walletInstance = new ethers.Wallet(privateKey, provider);
-  logger.info(`Wallet initialized: ${shortAddress(walletInstance.address)}`);
+  logger.info(
+    `EOA signer initialized: ${shortAddress(walletInstance.address)} | Safe: ${shortAddress(config.safeAddress)}`
+  );
   return walletInstance;
 }
 
 /**
- * Returns the wallet address
+ * Returns the EOA wallet address (signer)
  */
 export function getWalletAddress(): string {
   return getWallet().address;
 }
 
 /**
- * Queries the USDC balance of our wallet on Polygon
+ * Returns the Gnosis Safe address (where funds are held)
+ */
+export function getSafeAddress(): string {
+  return config.safeAddress;
+}
+
+/**
+ * Queries the USDC balance of the Gnosis Safe on Polygon.
+ * Funds are held in the Safe, not in the EOA.
  */
 export async function getUsdcBalance(): Promise<number> {
   const wallet = getWallet();
@@ -40,16 +51,41 @@ export async function getUsdcBalance(): Promise<number> {
     usdcAbi,
     wallet.provider
   );
-  const balance: bigint = await usdcContract.balanceOf(wallet.address);
+  // Query the Safe balance (funds are in the Safe)
+  const balance: bigint = await usdcContract.balanceOf(config.safeAddress);
   // USDC on Polygon has 6 decimals
   return Number(balance) / 1e6;
 }
 
 /**
- * Queries MATIC balance for gas
+ * Queries USDC balance of the EOA (needed for direct gas spending)
+ */
+export async function getEoaUsdcBalance(): Promise<number> {
+  const wallet = getWallet();
+  const usdcAbi = ["function balanceOf(address) view returns (uint256)"];
+  const usdcContract = new ethers.Contract(
+    config.contracts.usdc,
+    usdcAbi,
+    wallet.provider
+  );
+  const balance: bigint = await usdcContract.balanceOf(wallet.address);
+  return Number(balance) / 1e6;
+}
+
+/**
+ * Queries MATIC balance of EOA for gas fees
  */
 export async function getMaticBalance(): Promise<number> {
   const wallet = getWallet();
   const balance = await wallet.provider!.getBalance(wallet.address);
+  return Number(ethers.formatEther(balance));
+}
+
+/**
+ * Queries MATIC balance of the Gnosis Safe
+ */
+export async function getSafeMaticBalance(): Promise<number> {
+  const wallet = getWallet();
+  const balance = await wallet.provider!.getBalance(config.safeAddress);
   return Number(ethers.formatEther(balance));
 }

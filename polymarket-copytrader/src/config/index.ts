@@ -20,8 +20,12 @@ export const config = {
   polygonWsUrl: requireEnv("POLYGON_RPC_URL"),
   polygonHttpUrl: requireEnv("POLYGON_HTTP_URL"),
 
-  // Wallet
+  // Wallet - EOA signer (owner of the Gnosis Safe)
   privateKey: requireEnv("PRIVATE_KEY"),
+
+  // Gnosis Safe - the Safe holds funds, EOA signs on its behalf
+  safeAddress: requireEnv("SAFE_ADDRESS").toLowerCase(),
+  eoaAddress: requireEnv("EOA_ADDRESS").toLowerCase(),
 
   // Polymarket
   polymarketApiUrl: optionalEnv(

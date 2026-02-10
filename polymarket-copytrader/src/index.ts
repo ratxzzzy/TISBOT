@@ -1,7 +1,13 @@
 import { config } from "./config";
 import { logger } from "./utils/logger";
-import { isValidAddress, formatUsd } from "./utils/helpers";
-import { getWallet, getUsdcBalance, getMaticBalance } from "./services/wallet/signer";
+import { isValidAddress, formatUsd, shortAddress } from "./utils/helpers";
+import {
+  getWallet,
+  getUsdcBalance,
+  getEoaUsdcBalance,
+  getMaticBalance,
+  getSafeMaticBalance,
+} from "./services/wallet/signer";
 import { getClobClient } from "./services/polymarket/client";
 import { closeProviders } from "./services/blockchain/provider";
 import { CopyTrader } from "./core/copier";
@@ -14,6 +20,14 @@ let copyTrader: CopyTrader | null = null;
 function validateConfig(): void {
   if (!isValidAddress(config.walletToCopy)) {
     throw new Error(`Invalid target wallet address: ${config.walletToCopy}`);
+  }
+
+  if (!isValidAddress(config.safeAddress)) {
+    throw new Error(`Invalid Gnosis Safe address: ${config.safeAddress}`);
+  }
+
+  if (!isValidAddress(config.eoaAddress)) {
+    throw new Error(`Invalid EOA address: ${config.eoaAddress}`);
   }
 
   if (config.totalBudgetUsdc <= 0) {
@@ -46,30 +60,36 @@ async function main(): Promise<void> {
   validateConfig();
   logger.success("Configuration valid");
 
-  // Step 2: Initialize wallet
+  // Step 2: Initialize wallet (EOA signer for the Gnosis Safe)
   logger.info("Initializing wallet...");
   const wallet = getWallet();
-  logger.success(`Wallet ready: ${wallet.address}`);
+  logger.success(`EOA signer ready: ${wallet.address}`);
+  logger.info(`Gnosis Safe: ${shortAddress(config.safeAddress)}`);
 
-  // Step 3: Check balances
-  logger.info("Checking wallet balances...");
-  const [usdcBalance, maticBalance] = await Promise.all([
-    getUsdcBalance(),
-    getMaticBalance(),
-  ]);
+  // Step 3: Check balances (Safe holds funds, EOA needs MATIC for gas)
+  logger.info("Checking balances...");
+  const [safeUsdcBalance, eoaUsdcBalance, eoaMaticBalance, safeMaticBalance] =
+    await Promise.all([
+      getUsdcBalance(), // Safe USDC
+      getEoaUsdcBalance(), // EOA USDC
+      getMaticBalance(), // EOA MATIC
+      getSafeMaticBalance(), // Safe MATIC
+    ]);
 
-  logger.budget(`USDC balance: ${formatUsd(usdcBalance)}`);
-  logger.budget(`MATIC balance: ${maticBalance.toFixed(4)} MATIC`);
+  logger.budget(`Safe USDC balance: ${formatUsd(safeUsdcBalance)}`);
+  logger.budget(`Safe MATIC balance: ${safeMaticBalance.toFixed(4)} MATIC`);
+  logger.budget(`EOA USDC balance: ${formatUsd(eoaUsdcBalance)}`);
+  logger.budget(`EOA MATIC balance: ${eoaMaticBalance.toFixed(4)} MATIC`);
 
-  if (usdcBalance < config.minTradeSizeUsdc) {
+  if (safeUsdcBalance < config.minTradeSizeUsdc) {
     logger.warn(
-      `Low USDC balance (${formatUsd(usdcBalance)}). You need at least ${formatUsd(config.minTradeSizeUsdc)} to execute trades.`
+      `Low Safe USDC balance (${formatUsd(safeUsdcBalance)}). The Safe needs at least ${formatUsd(config.minTradeSizeUsdc)} USDC to execute trades.`
     );
   }
 
-  if (maticBalance < 0.01) {
+  if (eoaMaticBalance < 0.01) {
     logger.warn(
-      `Low MATIC balance (${maticBalance.toFixed(4)}). You need MATIC for gas fees.`
+      `Low EOA MATIC balance (${eoaMaticBalance.toFixed(4)}). EOA needs MATIC for gas fees.`
     );
   }
 

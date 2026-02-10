@@ -10,12 +10,16 @@ let clobClient: ClobClient | null = null;
 const DATA_API_BASE = "https://data-api.polymarket.com";
 
 /**
- * Initializes and returns the Polymarket CLOB client with L2 authentication.
- * Derives API keys from the wallet signer on first call.
+ * Initializes and returns the Polymarket CLOB client with L2 authentication
+ * using Gnosis Safe as the funder.
+ *
+ * Flow:
+ *   1. EOA signer derives API keys (L1 auth)
+ *   2. Client is created with signatureType=2 (Gnosis Safe) and funderAddress=Safe
+ *   3. The Safe holds funds (USDC + conditional tokens), the EOA signs orders
  *
  * Note: @polymarket/clob-client uses ethers v5 internally. We cast our ethers v6
- * Wallet to `any` because the signing interface is compatible for the operations
- * the CLOB client uses (signMessage, address).
+ * Wallet to `any` because the signing interface is compatible.
  */
 export async function getClobClient(): Promise<ClobClient> {
   if (clobClient) return clobClient;
@@ -26,32 +30,39 @@ export async function getClobClient(): Promise<ClobClient> {
   const signer = new ethers.Wallet(privateKey);
 
   logger.info(
-    `Initializing Polymarket CLOB client for ${shortAddress(signer.address)}`
+    `Initializing CLOB client | EOA: ${shortAddress(signer.address)} | Safe: ${shortAddress(config.safeAddress)}`
   );
 
-  // Step 1: Create L1 client to derive API keys
+  // Step 1: Create L1 client with Gnosis Safe signature type to derive API keys.
+  // The EOA signs, but the Safe is the funder that holds funds on Polymarket.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tempClient = new ClobClient(
     config.polymarketApiUrl,
     137, // Polygon mainnet
-    signer as any // ethers v6 Wallet is compatible with v5 for signing
+    signer as any, // ethers v6→v5 compat
+    undefined, // no creds yet
+    2, // signatureType: 2 = Gnosis Safe
+    config.safeAddress // funderAddress: Safe that holds funds
   );
 
-  // Step 2: Derive or create API credentials
+  // Step 2: Derive or create API credentials for this EOA+Safe pair
   const apiCreds = await tempClient.createOrDeriveApiKey();
-  logger.info("API credentials derived successfully");
+  logger.info("API credentials derived for Gnosis Safe");
 
-  // Step 3: Create fully authenticated L2 client
+  // Step 3: Create fully authenticated L2 client with Safe as funder
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   clobClient = new ClobClient(
     config.polymarketApiUrl,
     137,
-    signer as any, // ethers v6 Wallet is compatible with v5 for signing
+    signer as any, // EOA signs orders
     apiCreds,
-    0 // EOA signature type
+    2, // signatureType: 2 = Gnosis Safe
+    config.safeAddress // funderAddress: Safe holds the funds
   );
 
-  logger.success("Polymarket CLOB client initialized");
+  logger.success(
+    `Polymarket CLOB client ready (Gnosis Safe mode) | Safe: ${shortAddress(config.safeAddress)}`
+  );
   return clobClient;
 }
 
