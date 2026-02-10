@@ -75,35 +75,29 @@ export class PortfolioManager {
   }
 
   /**
-   * Calculates the copy trade size using proportional scaling.
+   * Calculates the copy trade size using a fixed-amount strategy.
    *
-   * Formula: ourSize = targetSize / COPY_DIVISOR, clamped to [min, max]
-   *
-   * With COPY_DIVISOR=10, MIN=1, MAX=5:
-   *   $5  target → $1.00 (min)
-   *   $15 target → $1.50
-   *   $20 target → $2.00
-   *   $30 target → $3.00
-   *   $50 target → $5.00 (max)
+   * Instead of proportional scaling (which produces amounts too small to
+   * execute when the target portfolio is much larger than our budget), we
+   * copy every trade at up to MAX_SINGLE_TRADE_USDC. If the original trade
+   * is smaller than our max, we mirror its exact size.
    *
    * Returns 0 if the resulting size is below MIN_TRADE_SIZE_USDC.
    */
   calculateTradeSize(originalSizeUsdc: number): number {
-    const scaled = originalSizeUsdc / config.copyDivisor;
+    // Use the smaller of: our max trade size, or the original trade amount
+    const size = Math.min(originalSizeUsdc, config.maxSingleTradeUsdc);
 
-    // Skip trades that are too small even after scaling
-    if (scaled < config.minTradeSizeUsdc) {
+    // Skip trades that are too small
+    if (size < config.minTradeSizeUsdc) {
       logger.debug(
-        `Trade size ${formatUsd(scaled)} (${formatUsd(originalSizeUsdc)} / ${config.copyDivisor}) below minimum ${formatUsd(config.minTradeSizeUsdc)}, skipping`
+        `Trade size ${formatUsd(size)} below minimum ${formatUsd(config.minTradeSizeUsdc)}, skipping`
       );
       return 0;
     }
 
-    // Cap at maximum single trade size
-    const capped = Math.min(scaled, config.maxSingleTradeUsdc);
-
     // Round to 2 decimal places (USDC precision)
-    return Math.round(capped * 100) / 100;
+    return Math.round(size * 100) / 100;
   }
 
   /**

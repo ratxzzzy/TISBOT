@@ -45,7 +45,7 @@ export class CopyTrader {
     logger.info("========================================");
     logger.info(`Target wallet: ${shortAddress(config.walletToCopy)}`);
     logger.budget(`Total budget: ${formatUsd(config.totalBudgetUsdc)}`);
-    logger.info(`Min trade: ${formatUsd(config.minTradeSizeUsdc)} | Max trade: ${formatUsd(config.maxSingleTradeUsdc)} | Divisor: ${config.copyDivisor}`);
+    logger.info(`Min trade: ${formatUsd(config.minTradeSizeUsdc)} | Max trade: ${formatUsd(config.maxSingleTradeUsdc)}`);
     logger.info(`Slippage tolerance: ${config.slippageTolerance}%`);
 
     // Step 1: Fetch target portfolio and calculate ratio
@@ -107,7 +107,7 @@ export class CopyTrader {
     }
 
     logger.copy(
-      `Copying: ${formatUsd(scaledSize)} (${formatUsd(trade.usdcSize)} / ${config.copyDivisor})`
+      `Copying: ${formatUsd(scaledSize)} (target traded ${formatUsd(trade.usdcSize)}, max ${formatUsd(config.maxSingleTradeUsdc)})`
     );
 
     // Check budget for buys

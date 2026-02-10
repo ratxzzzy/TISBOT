@@ -41,9 +41,6 @@ export const config = {
   minTradeSizeUsdc: parseFloat(optionalEnv("MIN_TRADE_SIZE_USDC", "1")),
   maxSingleTradeUsdc: parseFloat(optionalEnv("MAX_SINGLE_TRADE_USDC", "5")),
 
-  // Proportional scaling: ourSize = targetSize / copyDivisor, clamped to [min, max]
-  copyDivisor: parseFloat(optionalEnv("COPY_DIVISOR", "10")),
-
   // Trading
   slippageTolerance: parseFloat(optionalEnv("SLIPPAGE_TOLERANCE", "2")),
 
