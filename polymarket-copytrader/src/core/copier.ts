@@ -91,7 +91,15 @@ export class CopyTrader {
       `Target ${trade.side} $${trade.usdcSize.toFixed(2)} of "${trade.outcome}" in "${trade.title}" @ $${trade.price.toFixed(4)}`
     );
 
-    // Calculate proportional trade size
+    // Skip SELL orders - we can only sell tokens we own, and we don't track
+    // positions. These short-duration binary markets resolve automatically:
+    // wins pay out, losses expire worthless.
+    if (trade.side === "SELL") {
+      logger.debug("Skipping SELL (we only copy BUY orders)");
+      return;
+    }
+
+    // Calculate trade size
     const scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
     if (scaledSize === 0) {
       logger.debug("Scaled trade size is 0 (below minimum), skipping");

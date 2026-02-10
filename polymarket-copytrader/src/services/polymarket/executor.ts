@@ -19,13 +19,13 @@ export interface ExecutionResult {
 /**
  * Executes a copy trade on Polymarket via the CLOB API.
  *
- * Uses the target's exact price (with small slippage) and relies on
- * FOK (Fill-Or-Kill) to protect against unfavorable fills. If there's
- * no liquidity at our price, the order simply gets killed.
+ * Uses the target's exact price (with slippage) as a GTC limit order.
+ * GTC (Good-Til-Cancelled) lets the order sit on the book until filled,
+ * which works well for these active 15-minute binary markets.
  *
  * We do NOT validate against the order book because these fast-moving
- * 15-minute binary markets often show stale best-ask/bid prices (e.g.
- * $0.99) that differ wildly from the price the target actually traded at.
+ * markets often show stale best-ask/bid prices that differ wildly
+ * from the price the target actually traded at.
  */
 export async function executeTrade(
   trade: ParsedTrade,
@@ -61,42 +61,25 @@ export async function executeTrade(
     const shares = scaledAmountUsdc / roundedPrice;
 
     logger.copy(
-      `Executing ${side} ${shares.toFixed(2)} shares @ ${roundedPrice.toFixed(4)} (${formatUsd(scaledAmountUsdc)}) [target: ${trade.price.toFixed(4)}]`
+      `Placing ${side} ${shares.toFixed(2)} shares @ ${roundedPrice.toFixed(4)} (${formatUsd(scaledAmountUsdc)}) [target: ${trade.price.toFixed(4)}]`
     );
 
-    // Execute with retries
+    // Execute with retries - use GTC limit orders so they sit on the book
+    // until filled (better fill rate than FOK for fast-moving markets)
     const result = await retryWithBackoff(async () => {
-      if (side === Side.BUY) {
-        // FOK: fill everything at our price or cancel entirely
-        return await client.createAndPostMarketOrder(
-          {
-            tokenID: trade.tokenId,
-            amount: scaledAmountUsdc,
-            price: roundedPrice,
-            side: Side.BUY,
-          },
-          {
-            tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
-            negRisk: negRisk,
-          },
-          OrderType.FOK
-        );
-      } else {
-        // GTC limit order for sells at the target's price
-        return await client.createAndPostOrder(
-          {
-            tokenID: trade.tokenId,
-            price: roundedPrice,
-            size: Math.floor(shares * 100) / 100, // Round down shares
-            side: Side.SELL,
-          },
-          {
-            tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
-            negRisk: negRisk,
-          },
-          OrderType.GTC
-        );
-      }
+      return await client.createAndPostOrder(
+        {
+          tokenID: trade.tokenId,
+          price: roundedPrice,
+          size: Math.floor(shares * 100) / 100, // Round down shares
+          side,
+        },
+        {
+          tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
+          negRisk: negRisk,
+        },
+        OrderType.GTC
+      );
     }, config.maxRetries);
 
     if (result.success) {
