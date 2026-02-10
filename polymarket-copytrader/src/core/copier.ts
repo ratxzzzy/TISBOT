@@ -4,6 +4,7 @@ import { formatUsd, formatPercent, shortAddress } from "../utils/helpers";
 import { ActivityMonitor } from "../services/blockchain/monitor";
 import type { DetectedTrade } from "../services/blockchain/monitor";
 import { executeTrade } from "../services/polymarket/executor";
+import { getConditionalTokenBalance } from "../services/wallet/signer";
 import { PortfolioManager } from "./portfolio";
 import { TradeQueue } from "./queue";
 import type { QueuedTrade } from "./queue";
@@ -84,46 +85,72 @@ export class CopyTrader {
   /**
    * Called when a new trade from the target wallet is detected via the activity API.
    */
-  private onTradeDetected(trade: DetectedTrade): void {
+  private async onTradeDetected(trade: DetectedTrade): Promise<void> {
     if (!this.running) return;
 
     logger.trade(
       `Target ${trade.side} $${trade.usdcSize.toFixed(2)} of "${trade.outcome}" in "${trade.title}" @ $${trade.price.toFixed(4)}`
     );
 
-    // Skip SELL orders - we can only sell tokens we own, and we don't track
-    // positions. These short-duration binary markets resolve automatically:
-    // wins pay out, losses expire worthless.
+    let scaledSize: number;
+
     if (trade.side === "SELL") {
-      logger.debug("Skipping SELL (we only copy BUY orders)");
-      return;
-    }
+      // For SELLs, check if we actually hold this token before attempting to sell
+      try {
+        const tokenBalance = await getConditionalTokenBalance(trade.tokenId);
+        if (tokenBalance === 0n) {
+          logger.debug(`Skipping SELL: no balance for token ${shortAddress(trade.tokenId)}`);
+          return;
+        }
 
-    // Calculate trade size
-    const scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
-    if (scaledSize === 0) {
-      logger.debug("Scaled trade size is 0 (below minimum), skipping");
-      return;
-    }
+        // Sell what we have: token balance (in shares) * price = USDC value
+        // ConditionalTokens use 6 decimals (like USDC)
+        const sharesWeHold = Number(tokenBalance) / 1e6;
+        scaledSize = Math.round(sharesWeHold * trade.price * 100) / 100;
 
-    logger.copy(
-      `Copying: ${formatUsd(scaledSize)} (target traded ${formatUsd(trade.usdcSize)}, max ${formatUsd(config.maxSingleTradeUsdc)})`
-    );
+        if (scaledSize < config.minTradeSizeUsdc) {
+          logger.debug(`SELL too small: ${formatUsd(scaledSize)} (have ${sharesWeHold.toFixed(2)} shares)`);
+          return;
+        }
 
-    // Check budget for buys
-    if (trade.side === "BUY" && !this.portfolio.canExecuteTrade(scaledSize)) {
-      logger.warn(
-        `Insufficient budget: need ${formatUsd(scaledSize)} but only ${formatUsd(this.portfolio.availableBudget)} available`
+        logger.copy(
+          `Copying SELL: ${sharesWeHold.toFixed(2)} shares (~${formatUsd(scaledSize)}) of token ${shortAddress(trade.tokenId)}`
+        );
+      } catch (err) {
+        logger.error(
+          `Failed to check token balance for SELL`,
+          err instanceof Error ? err.message : err
+        );
+        return;
+      }
+    } else {
+      // BUY: use fixed-size strategy as before
+      scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
+      if (scaledSize === 0) {
+        logger.debug("Scaled trade size is 0 (below minimum), skipping");
+        return;
+      }
+
+      logger.copy(
+        `Copying: ${formatUsd(scaledSize)} (target traded ${formatUsd(trade.usdcSize)}, max ${formatUsd(config.maxSingleTradeUsdc)})`
       );
-      return;
+
+      // Check budget for buys
+      if (!this.portfolio.canExecuteTrade(scaledSize)) {
+        logger.warn(
+          `Insufficient budget: need ${formatUsd(scaledSize)} but only ${formatUsd(this.portfolio.availableBudget)} available`
+        );
+        return;
+      }
     }
 
     // Convert DetectedTrade to the format the executor expects
+    // For SELLs, use our actual share count; for BUYs, use the target's data
     const parsedTrade = {
       txHash: trade.txHash,
       tradeType: trade.side,
       tokenId: trade.tokenId,
-      amountUsdc: trade.usdcSize,
+      amountUsdc: trade.side === "SELL" ? scaledSize : trade.usdcSize,
       shares: trade.shares,
       price: trade.price,
       isNegRisk: false, // Will be determined by the executor from the order book

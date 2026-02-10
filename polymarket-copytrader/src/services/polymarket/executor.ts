@@ -57,8 +57,14 @@ export async function executeTrade(
     // Round price to tick size
     const roundedPrice = roundToTickSize(price, tickSize);
 
-    // Calculate number of shares from USDC amount
-    const shares = scaledAmountUsdc / roundedPrice;
+    // Calculate number of shares
+    // For SELLs, use scaledAmountUsdc / trade.price to get our actual shares
+    // (scaledAmountUsdc already = sharesWeHold * trade.price for SELLs)
+    // For BUYs, derive from the rounded price
+    const shares =
+      side === Side.SELL
+        ? scaledAmountUsdc / trade.price
+        : scaledAmountUsdc / roundedPrice;
 
     logger.copy(
       `Placing ${side} ${shares.toFixed(2)} shares @ ${roundedPrice.toFixed(4)} (${formatUsd(scaledAmountUsdc)}) [target: ${trade.price.toFixed(4)}]`

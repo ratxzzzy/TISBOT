@@ -89,3 +89,18 @@ export async function getSafeMaticBalance(): Promise<number> {
   const balance = await wallet.provider!.getBalance(config.safeAddress);
   return Number(ethers.formatEther(balance));
 }
+
+/**
+ * Queries the ERC-1155 balance of a conditional token in the Gnosis Safe.
+ * Used to check if we hold tokens before attempting a SELL.
+ * Returns the raw token balance (not USDC-denominated).
+ */
+export async function getConditionalTokenBalance(tokenId: string): Promise<bigint> {
+  const wallet = getWallet();
+  const ctf = new ethers.Contract(
+    config.contracts.conditionalTokens,
+    ["function balanceOf(address owner, uint256 id) view returns (uint256)"],
+    wallet.provider
+  );
+  return await ctf.balanceOf(config.safeAddress, tokenId);
+}
