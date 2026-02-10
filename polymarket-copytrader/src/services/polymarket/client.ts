@@ -1,5 +1,5 @@
 import { ClobClient } from "@polymarket/clob-client";
-import { ethers } from "ethers";
+import { Wallet as EthersV5Wallet } from "@polymarket/clob-client/node_modules/ethers";
 import { config } from "../../config";
 import { logger } from "../../utils/logger";
 import { shortAddress } from "../../utils/helpers";
@@ -27,7 +27,11 @@ export async function getClobClient(): Promise<ClobClient> {
   const privateKey = config.privateKey.startsWith("0x")
     ? config.privateKey
     : `0x${config.privateKey}`;
-  const signer = new ethers.Wallet(privateKey);
+
+  // CRITICAL: Use ethers v5 Wallet for the CLOB client.
+  // @polymarket/clob-client calls signer._signTypedData() which only exists in ethers v5.
+  // ethers v6 renamed it to signTypedData() (no underscore), causing the error.
+  const signer = new EthersV5Wallet(privateKey);
 
   logger.info(
     `Initializing CLOB client | EOA: ${shortAddress(signer.address)} | Safe: ${shortAddress(config.safeAddress)}`
@@ -35,11 +39,10 @@ export async function getClobClient(): Promise<ClobClient> {
 
   // Step 1: Create L1 client with Gnosis Safe signature type to derive API keys.
   // The EOA signs, but the Safe is the funder that holds funds on Polymarket.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tempClient = new ClobClient(
     config.polymarketApiUrl,
     137, // Polygon mainnet
-    signer as any, // ethers v6→v5 compat
+    signer,
     undefined, // no creds yet
     2, // signatureType: 2 = Gnosis Safe
     config.safeAddress // funderAddress: Safe that holds funds
@@ -50,11 +53,10 @@ export async function getClobClient(): Promise<ClobClient> {
   logger.info("API credentials derived for Gnosis Safe");
 
   // Step 3: Create fully authenticated L2 client with Safe as funder
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   clobClient = new ClobClient(
     config.polymarketApiUrl,
     137,
-    signer as any, // EOA signs orders
+    signer, // ethers v5 Wallet with _signTypedData support
     apiCreds,
     2, // signatureType: 2 = Gnosis Safe
     config.safeAddress // funderAddress: Safe holds the funds
