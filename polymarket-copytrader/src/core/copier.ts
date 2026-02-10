@@ -1,10 +1,8 @@
 import { config } from "../config";
 import { logger } from "../utils/logger";
 import { formatUsd, formatPercent, shortAddress } from "../utils/helpers";
-import { TransactionMonitor } from "../services/blockchain/monitor";
-import type { DetectedTransaction } from "../services/blockchain/monitor";
-import { parseTransaction } from "../services/polymarket/parser";
-import type { ParsedTrade } from "../services/polymarket/parser";
+import { ActivityMonitor } from "../services/blockchain/monitor";
+import type { DetectedTrade } from "../services/blockchain/monitor";
 import { executeTrade } from "../services/polymarket/executor";
 import { PortfolioManager } from "./portfolio";
 import { TradeQueue } from "./queue";
@@ -14,17 +12,17 @@ import type { QueuedTrade } from "./queue";
  * Main copytrading engine.
  *
  * Orchestrates the flow:
- *   monitor → parse → calculate proportional size → validate budget → queue → execute
+ *   poll activity API → detect new trade → calculate proportional size → validate budget → queue → execute
  */
 export class CopyTrader {
-  private monitor: TransactionMonitor;
+  private monitor: ActivityMonitor;
   private portfolio: PortfolioManager;
   private queue: TradeQueue;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
   private running: boolean = false;
 
   constructor() {
-    this.monitor = new TransactionMonitor();
+    this.monitor = new ActivityMonitor(5000); // Poll every 5 seconds
     this.portfolio = new PortfolioManager();
     this.queue = new TradeQueue();
 
@@ -36,7 +34,7 @@ export class CopyTrader {
    * Starts the copytrading bot:
    * 1. Fetch target portfolio value
    * 2. Calculate copy ratio
-   * 3. Start monitoring transactions
+   * 3. Start polling activity API
    * 4. Schedule periodic portfolio refresh
    */
   async start(): Promise<void> {
@@ -56,8 +54,8 @@ export class CopyTrader {
       `Copy ratio: ${formatPercent(this.portfolio.copyRatio)} (${formatUsd(this.portfolio.availableBudget)} / ${formatUsd(this.portfolio.targetWalletValue)})`
     );
 
-    // Step 2: Start transaction monitoring
-    this.monitor.start((tx) => this.onTransactionDetected(tx));
+    // Step 2: Start activity polling (this seeds existing trades first)
+    await this.monitor.start((trade) => this.onTradeDetected(trade));
 
     // Step 3: Schedule hourly portfolio refresh to keep ratio current
     this.refreshInterval = setInterval(async () => {
@@ -65,7 +63,7 @@ export class CopyTrader {
       await this.portfolio.refreshTargetPortfolio();
     }, config.portfolioRefreshIntervalMs);
 
-    logger.success("Bot is running and monitoring transactions");
+    logger.success("Bot is running and monitoring trades via Polymarket API");
   }
 
   /**
@@ -84,47 +82,49 @@ export class CopyTrader {
   }
 
   /**
-   * Called when a Polymarket transaction from the target wallet is detected.
+   * Called when a new trade from the target wallet is detected via the activity API.
    */
-  private onTransactionDetected(tx: DetectedTransaction): void {
+  private onTradeDetected(trade: DetectedTrade): void {
     if (!this.running) return;
 
     logger.trade(
-      `Detected tx ${shortAddress(tx.hash)} from ${shortAddress(tx.from)} → ${shortAddress(tx.to)}`
-    );
-
-    // Parse the transaction to extract trade details
-    const parsed = parseTransaction(tx);
-    if (!parsed) {
-      logger.debug(`Tx ${shortAddress(tx.hash)} is not a recognized trade, skipping`);
-      return;
-    }
-
-    logger.trade(
-      `Parsed: ${parsed.tradeType} ${formatUsd(parsed.amountUsdc)} @ ${parsed.price.toFixed(4)} | Token: ${shortAddress(parsed.tokenId)}`
+      `Target ${trade.side} $${trade.usdcSize.toFixed(2)} of "${trade.outcome}" in "${trade.title}" @ $${trade.price.toFixed(4)}`
     );
 
     // Calculate proportional trade size
-    const scaledSize = this.portfolio.calculateTradeSize(parsed.amountUsdc);
+    const scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
     if (scaledSize === 0) {
-      logger.debug("Scaled trade size is 0, skipping");
+      logger.debug("Scaled trade size is 0 (below minimum), skipping");
       return;
     }
 
     logger.copy(
-      `Calculated: ${formatUsd(parsed.amountUsdc)} × ${formatPercent(this.portfolio.copyRatio)} = ${formatUsd(scaledSize)}`
+      `Calculated: ${formatUsd(trade.usdcSize)} x ${formatPercent(this.portfolio.copyRatio)} = ${formatUsd(scaledSize)}`
     );
 
-    // Check budget
-    if (parsed.tradeType === "BUY" && !this.portfolio.canExecuteTrade(scaledSize)) {
+    // Check budget for buys
+    if (trade.side === "BUY" && !this.portfolio.canExecuteTrade(scaledSize)) {
       logger.warn(
         `Insufficient budget: need ${formatUsd(scaledSize)} but only ${formatUsd(this.portfolio.availableBudget)} available`
       );
       return;
     }
 
+    // Convert DetectedTrade to the format the executor expects
+    const parsedTrade = {
+      txHash: trade.txHash,
+      tradeType: trade.side,
+      tokenId: trade.tokenId,
+      amountUsdc: trade.usdcSize,
+      shares: trade.shares,
+      price: trade.price,
+      isNegRisk: false, // Will be determined by the executor from the order book
+      exchange: "",
+      functionName: "activity-api",
+    } as const;
+
     // Enqueue for execution
-    this.queue.enqueue(parsed, scaledSize);
+    this.queue.enqueue(parsedTrade, scaledSize);
   }
 
   /**
