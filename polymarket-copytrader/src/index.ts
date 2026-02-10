@@ -11,8 +11,10 @@ import {
 import { getClobClient } from "./services/polymarket/client";
 import { closeProviders } from "./services/blockchain/provider";
 import { CopyTrader } from "./core/copier";
+import { AutoRedeemer } from "./services/redeemer";
 
 let copyTrader: CopyTrader | null = null;
+let autoRedeemer: AutoRedeemer | null = null;
 
 /**
  * Validates that all required configuration is present and correct.
@@ -98,7 +100,11 @@ async function main(): Promise<void> {
   await getClobClient();
   logger.success("Polymarket CLOB client ready");
 
-  // Step 5: Start the copytrader
+  // Step 5: Start auto-redeemer (claims resolved positions → USDC)
+  autoRedeemer = new AutoRedeemer();
+  autoRedeemer.start();
+
+  // Step 6: Start the copytrader
   copyTrader = new CopyTrader();
   await copyTrader.start();
 }
@@ -108,6 +114,10 @@ async function main(): Promise<void> {
  */
 async function shutdown(signal: string): Promise<void> {
   logger.info(`\nReceived ${signal}, shutting down gracefully...`);
+
+  if (autoRedeemer) {
+    autoRedeemer.stop();
+  }
 
   if (copyTrader) {
     copyTrader.stop();
