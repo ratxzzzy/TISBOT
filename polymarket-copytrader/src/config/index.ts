@@ -38,8 +38,8 @@ export const config = {
 
   // Budget
   totalBudgetUsdc: parseFloat(optionalEnv("TOTAL_BUDGET_USDC", "400")),
-  minTradeSizeUsdc: parseFloat(optionalEnv("MIN_TRADE_SIZE_USDC", "2")),
-  maxSingleTradeUsdc: parseFloat(optionalEnv("MAX_SINGLE_TRADE_USDC", "50")),
+  minTradeSizeUsdc: parseFloat(optionalEnv("MIN_TRADE_SIZE_USDC", "1")),
+  maxSingleTradeUsdc: parseFloat(optionalEnv("MAX_SINGLE_TRADE_USDC", "5")),
 
   // Trading
   slippageTolerance: parseFloat(optionalEnv("SLIPPAGE_TOLERANCE", "2")),

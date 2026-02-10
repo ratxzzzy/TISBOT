@@ -99,7 +99,7 @@ export class CopyTrader {
     }
 
     logger.copy(
-      `Calculated: ${formatUsd(trade.usdcSize)} x ${formatPercent(this.portfolio.copyRatio)} = ${formatUsd(scaledSize)}`
+      `Copying: ${formatUsd(scaledSize)} (target traded ${formatUsd(trade.usdcSize)}, max ${formatUsd(config.maxSingleTradeUsdc)})`
     );
 
     // Check budget for buys

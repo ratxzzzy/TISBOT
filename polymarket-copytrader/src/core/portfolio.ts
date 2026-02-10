@@ -75,27 +75,29 @@ export class PortfolioManager {
   }
 
   /**
-   * Calculates the proportional trade size for a copy trade.
-   * Applies the copy ratio and enforces min/max limits.
+   * Calculates the copy trade size using a fixed-amount strategy.
    *
-   * Returns 0 if the calculated size is below MIN_TRADE_SIZE_USDC.
+   * Instead of proportional scaling (which produces amounts too small to
+   * execute when the target portfolio is much larger than our budget), we
+   * copy every trade at up to MAX_SINGLE_TRADE_USDC. If the original trade
+   * is smaller than our max, we mirror its exact size.
+   *
+   * Returns 0 if the resulting size is below MIN_TRADE_SIZE_USDC.
    */
   calculateTradeSize(originalSizeUsdc: number): number {
-    const scaled = originalSizeUsdc * this.copyRatio;
+    // Use the smaller of: our max trade size, or the original trade amount
+    const size = Math.min(originalSizeUsdc, config.maxSingleTradeUsdc);
 
-    // Check minimum trade size
-    if (scaled < config.minTradeSizeUsdc) {
+    // Skip trades that are too small
+    if (size < config.minTradeSizeUsdc) {
       logger.debug(
-        `Trade size ${formatUsd(scaled)} below minimum ${formatUsd(config.minTradeSizeUsdc)}, skipping`
+        `Trade size ${formatUsd(size)} below minimum ${formatUsd(config.minTradeSizeUsdc)}, skipping`
       );
       return 0;
     }
 
-    // Cap at maximum single trade size
-    const capped = Math.min(scaled, config.maxSingleTradeUsdc);
-
     // Round to 2 decimal places (USDC precision)
-    return Math.round(capped * 100) / 100;
+    return Math.round(size * 100) / 100;
   }
 
   /**
