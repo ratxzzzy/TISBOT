@@ -1,79 +1,112 @@
 import { config } from "../config";
 import { logger } from "../utils/logger";
 import { formatUsd, formatPercent } from "../utils/helpers";
-import { getPortfolioValue } from "../services/polymarket/client";
 import { getUsdcBalance } from "../services/wallet/signer";
 
+// 🔧 FIX: Reescritura completa del PortfolioManager.
+// ANTES: usaba Math.min(traderSize, $5) — un cap plano sin proporcionalidad.
+//        El copyRatio se calculaba pero NUNCA se aplicaba al sizing.
+//        totalBudgetUsdc se definía en config pero NUNCA se enforceaba.
+//        getPortfolioValue() se llamaba pero el ratio resultante se ignoraba en calculateTradeSize().
+// AHORA: sizing 100% proporcional al trader copiado usando ratio dinámico configurado por el operador.
+
 /**
- * Manages the copytrading budget using the real Safe USDC balance.
+ * Manages proportional position sizing for copytrading.
  *
- * Instead of tracking spent/recovered amounts manually (which drifts
- * when the auto-redeemer claims resolved positions), we query the
- * actual on-chain USDC balance of the Gnosis Safe.
+ * The sizing is 100% proportional to the copied trader:
+ *   RATIO = MAX_OUR_POSITION / TRADER_MAX_POSITION
+ *   ourSize = traderSize * RATIO
+ *
+ * Example with MAX_OUR=10, TRADER_MAX=200 → RATIO=0.05:
+ *   Trader $200 → We $10 (our max)
+ *   Trader $100 → We $5
+ *   Trader $50  → We $2.50
+ *   Trader $10  → We $0.50
+ *
+ * Safety: if trader exceeds TRADER_MAX_POSITION, we cap at MAX_OUR_POSITION
+ * and log an alert (rather than auto-updating the ratio).
  */
 export class PortfolioManager {
   /** Cached Safe USDC balance */
   private cachedBalance: number = 0;
-  targetWalletValue: number = 0;
-  copyRatio: number = 0;
+
+  // 🔧 FIX: Ratio calculado desde config, no desde portfolio value del trader
+  /** Dynamic copy ratio = MAX_OUR_POSITION / TRADER_MAX_POSITION */
+  private _ratio: number;
+
+  constructor() {
+    this._ratio = config.maxOurPositionUsdc / config.traderMaxPositionUsdc;
+  }
+
+  get ratio(): number {
+    return this._ratio;
+  }
 
   get availableBudget(): number {
     return this.cachedBalance;
   }
 
+  // 🔧 FIX: Reemplaza refreshTargetPortfolio() que llamaba a getPortfolioValue()
+  // y calculaba un ratio que nunca se usaba. Ahora solo refresca el balance.
   /**
-   * Fetches the Safe USDC balance and target wallet portfolio value.
+   * Refreshes the cached Safe USDC balance from chain.
    */
-  async refreshTargetPortfolio(): Promise<void> {
+  async refreshBalance(): Promise<void> {
     try {
-      const [value, balance] = await Promise.all([
-        getPortfolioValue(config.walletToCopy),
-        getUsdcBalance(),
-      ]);
-
-      this.targetWalletValue = value;
-      this.cachedBalance = balance;
-
-      if (value > 0) {
-        this.copyRatio = this.cachedBalance / value;
-      } else {
-        logger.warn("Target portfolio value is 0, using 1% default ratio");
-        this.copyRatio = 0.01;
-      }
-
+      this.cachedBalance = await getUsdcBalance();
+      logger.budget(`Safe USDC disponible: ${formatUsd(this.cachedBalance)}`);
       logger.budget(
-        `Portfolio objetivo: ${formatUsd(this.targetWalletValue)} | Ratio: ${formatPercent(this.copyRatio)}`
-      );
-      logger.budget(
-        `Safe USDC disponible: ${formatUsd(this.cachedBalance)}`
+        `Ratio proporcional: ${formatPercent(this._ratio)} (MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)})`
       );
     } catch (err) {
       logger.error(
-        "Failed to refresh portfolio",
+        "Failed to refresh balance",
         err instanceof Error ? err.message : err
       );
     }
   }
 
+  // 🔧 FIX: Reescritura total de calculateTradeSize().
+  // ANTES: Math.min(originalSizeUsdc, config.maxSingleTradeUsdc) — cap plano a $5.
+  // AHORA: ourSize = traderSize * RATIO — proporcionalidad exacta.
   /**
-   * Calculates the copy trade size using a fixed-amount strategy.
+   * Calculates the proportional copy trade size.
    *
-   * Copies every trade at up to MAX_SINGLE_TRADE_USDC. If the original trade
-   * is smaller than our max, we mirror its exact size.
+   * Logic:
+   *   1. ourSize = traderSize * RATIO (exact proportional)
+   *   2. If trader exceeds TRADER_MAX_POSITION → cap at MAX_OUR_POSITION + alert
+   *   3. If ourSize < MIN_POSITION_SIZE → skip (return 0)
    *
-   * Returns 0 if the resulting size is below MIN_TRADE_SIZE_USDC.
+   * No artificial caps. The proportion is exact.
    */
-  calculateTradeSize(originalSizeUsdc: number): number {
-    const size = Math.min(originalSizeUsdc, config.maxSingleTradeUsdc);
+  calculateTradeSize(traderSizeUsdc: number): number {
+    let ourSize: number;
 
-    if (size < config.minTradeSizeUsdc) {
+    if (traderSizeUsdc > config.traderMaxPositionUsdc) {
+      // Seguridad: trader superó su máximo histórico conocido.
+      // Capeamos a nuestro máximo absoluto en lugar de auto-actualizar el ratio.
+      ourSize = config.maxOurPositionUsdc;
+      logger.warn(
+        `ALERTA: Trader superó su máximo histórico! Trade=${formatUsd(traderSizeUsdc)} > TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)}. ` +
+        `Capeando a nuestro máximo: ${formatUsd(ourSize)}. Considera actualizar TRADER_MAX_POSITION_USDC.`
+      );
+    } else {
+      // Proporción exacta: sin caps artificiales
+      ourSize = traderSizeUsdc * this._ratio;
+    }
+
+    // Redondear a 2 decimales (centavos USDC)
+    ourSize = Math.round(ourSize * 100) / 100;
+
+    // Protección mínima: no abrir posiciones ridículas
+    if (ourSize < config.minPositionSizeUsdc) {
       logger.debug(
-        `Trade size ${formatUsd(size)} below minimum ${formatUsd(config.minTradeSizeUsdc)}, skipping`
+        `Trade proporcional ${formatUsd(ourSize)} por debajo del mínimo ${formatUsd(config.minPositionSizeUsdc)}, skipping`
       );
       return 0;
     }
 
-    return Math.round(size * 100) / 100;
+    return ourSize;
   }
 
   /**

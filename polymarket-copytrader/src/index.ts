@@ -11,10 +11,12 @@ import {
 import { getClobClient } from "./services/polymarket/client";
 import { closeProviders } from "./services/blockchain/provider";
 import { CopyTrader } from "./core/copier";
-import { AutoRedeemer } from "./services/redeemer";
+
+// 🔧 FIX: AutoRedeemer ELIMINADO — reciclaba USDC de posiciones resueltas de vuelta
+// al balance disponible, creando un feedback loop que amplificaba las pérdidas.
+// Las posiciones deben ser redimidas manualmente por el operador tras revisión.
 
 let copyTrader: CopyTrader | null = null;
-let autoRedeemer: AutoRedeemer | null = null;
 
 /**
  * Validates that all required configuration is present and correct.
@@ -32,12 +34,17 @@ function validateConfig(): void {
     throw new Error(`Invalid EOA address: ${config.eoaAddress}`);
   }
 
-  if (config.totalBudgetUsdc <= 0) {
-    throw new Error("TOTAL_BUDGET_USDC must be greater than 0");
+  // 🔧 FIX: Validar los nuevos parámetros de sizing proporcional
+  if (config.maxOurPositionUsdc <= 0) {
+    throw new Error("MAX_OUR_POSITION_USDC must be greater than 0");
   }
 
-  if (config.minTradeSizeUsdc <= 0) {
-    throw new Error("MIN_TRADE_SIZE_USDC must be greater than 0");
+  if (config.traderMaxPositionUsdc <= 0) {
+    throw new Error("TRADER_MAX_POSITION_USDC must be greater than 0");
+  }
+
+  if (config.minPositionSizeUsdc < 0) {
+    throw new Error("MIN_POSITION_SIZE_USDC must be >= 0");
   }
 
   if (config.slippageTolerance < 0 || config.slippageTolerance > 50) {
@@ -54,7 +61,7 @@ function validateConfig(): void {
  */
 async function main(): Promise<void> {
   logger.info("========================================");
-  logger.info("   Polymarket CopyTrader Bot v1.0.0     ");
+  logger.info("   Polymarket CopyTrader Bot v2.0.0     ");
   logger.info("========================================\n");
 
   // Step 1: Validate configuration
@@ -83,9 +90,9 @@ async function main(): Promise<void> {
   logger.budget(`EOA USDC balance: ${formatUsd(eoaUsdcBalance)}`);
   logger.budget(`EOA MATIC balance: ${eoaMaticBalance.toFixed(4)} MATIC`);
 
-  if (safeUsdcBalance < config.minTradeSizeUsdc) {
+  if (safeUsdcBalance < config.minPositionSizeUsdc) {
     logger.warn(
-      `Low Safe USDC balance (${formatUsd(safeUsdcBalance)}). The Safe needs at least ${formatUsd(config.minTradeSizeUsdc)} USDC to execute trades.`
+      `Low Safe USDC balance (${formatUsd(safeUsdcBalance)}). The Safe needs at least ${formatUsd(config.minPositionSizeUsdc)} USDC to execute trades.`
     );
   }
 
@@ -95,16 +102,18 @@ async function main(): Promise<void> {
     );
   }
 
+  // 🔧 FIX: Log the proportional sizing configuration
+  const ratio = config.maxOurPositionUsdc / config.traderMaxPositionUsdc;
+  logger.info(`Proportional sizing: MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)} = ratio ${ratio.toFixed(4)}`);
+  logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)}`);
+
   // Step 4: Initialize Polymarket CLOB client
   logger.info("Connecting to Polymarket CLOB API...");
   await getClobClient();
   logger.success("Polymarket CLOB client ready");
 
-  // Step 5: Start auto-redeemer (claims resolved positions → USDC)
-  autoRedeemer = new AutoRedeemer();
-  autoRedeemer.start();
-
-  // Step 6: Start the copytrader
+  // 🔧 FIX: AutoRedeemer ELIMINADO — Step 5 ahora es directamente el CopyTrader
+  // Step 5: Start the copytrader
   copyTrader = new CopyTrader();
   await copyTrader.start();
 }
@@ -114,10 +123,6 @@ async function main(): Promise<void> {
  */
 async function shutdown(signal: string): Promise<void> {
   logger.info(`\nReceived ${signal}, shutting down gracefully...`);
-
-  if (autoRedeemer) {
-    autoRedeemer.stop();
-  }
 
   if (copyTrader) {
     copyTrader.stop();

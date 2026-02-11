@@ -33,10 +33,10 @@ export class CopyTrader {
 
   /**
    * Starts the copytrading bot:
-   * 1. Fetch target portfolio value
-   * 2. Calculate copy ratio
+   * 1. Refresh Safe USDC balance
+   * 2. Log proportional sizing config
    * 3. Start polling activity API
-   * 4. Schedule periodic portfolio refresh
+   * 4. Schedule periodic balance refresh
    */
   async start(): Promise<void> {
     this.running = true;
@@ -45,22 +45,26 @@ export class CopyTrader {
     logger.info("   Polymarket CopyTrader Bot Starting   ");
     logger.info("========================================");
     logger.info(`Target wallet: ${shortAddress(config.walletToCopy)}`);
-    logger.info(`Min trade: ${formatUsd(config.minTradeSizeUsdc)} | Max trade: ${formatUsd(config.maxSingleTradeUsdc)}`);
-    logger.info(`Slippage tolerance: ${config.slippageTolerance}%`);
 
-    // Step 1: Fetch target portfolio and calculate ratio
-    await this.portfolio.refreshTargetPortfolio();
+    // 🔧 FIX: Mostrar configuración de sizing proporcional en lugar del cap fijo anterior
     logger.info(
-      `Copy ratio: ${formatPercent(this.portfolio.copyRatio)} (${formatUsd(this.portfolio.availableBudget)} / ${formatUsd(this.portfolio.targetWalletValue)})`
+      `Proportional sizing: ratio=${formatPercent(this.portfolio.ratio)} ` +
+      `(MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)})`
     );
+    logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)} | Slippage: ${config.slippageTolerance}%`);
+
+    // 🔧 FIX: Usar refreshBalance() en lugar de refreshTargetPortfolio()
+    // Ya no necesitamos el portfolio value del trader — el ratio viene de config.
+    // Step 1: Refresh Safe balance
+    await this.portfolio.refreshBalance();
 
     // Step 2: Start activity polling (this seeds existing trades first)
     await this.monitor.start((trade) => this.onTradeDetected(trade));
 
-    // Step 3: Schedule hourly portfolio refresh to keep ratio current
+    // Step 3: Schedule hourly balance refresh
     this.refreshInterval = setInterval(async () => {
-      logger.info("Refreshing target portfolio value...");
-      await this.portfolio.refreshTargetPortfolio();
+      logger.info("Refreshing Safe USDC balance...");
+      await this.portfolio.refreshBalance();
     }, config.portfolioRefreshIntervalMs);
 
     logger.success("Bot is running and monitoring trades via Polymarket API");
@@ -107,7 +111,8 @@ export class CopyTrader {
         const sharesWeHold = Number(tokenBalance) / 1e6;
         scaledSize = Math.round(sharesWeHold * trade.price * 100) / 100;
 
-        if (scaledSize < config.minTradeSizeUsdc) {
+        // 🔧 FIX: Usar minPositionSizeUsdc en lugar del viejo minTradeSizeUsdc
+        if (scaledSize < config.minPositionSizeUsdc) {
           logger.debug(`SELL too small: ${formatUsd(scaledSize)} (have ${sharesWeHold.toFixed(2)} shares)`);
           return;
         }
@@ -123,15 +128,15 @@ export class CopyTrader {
         return;
       }
     } else {
-      // BUY: use fixed-size strategy as before
+      // 🔧 FIX: BUY usa sizing proporcional dinámico en lugar del cap plano anterior
       scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
       if (scaledSize === 0) {
-        logger.debug("Scaled trade size is 0 (below minimum), skipping");
+        logger.debug("Proportional trade size is 0 (below minimum), skipping");
         return;
       }
 
       logger.copy(
-        `Copying: ${formatUsd(scaledSize)} (target traded ${formatUsd(trade.usdcSize)}, max ${formatUsd(config.maxSingleTradeUsdc)})`
+        `Copying BUY: ${formatUsd(scaledSize)} (trader=${formatUsd(trade.usdcSize)} x ratio=${formatPercent(this.portfolio.ratio)})`
       );
 
       // Check budget for buys
