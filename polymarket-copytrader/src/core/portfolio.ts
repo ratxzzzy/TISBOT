@@ -9,15 +9,15 @@ import { getUsdcBalance } from "../services/wallet/signer";
  * Sizing tiers (applied to both BUY and SELL):
  *   Trader ≤ $5      → copy exact amount
  *   $5 < Trader ≤ $15 → copy amount / 2
- *   Trader > $15      → copy 10% of amount
+ *   Trader > $15      → copy 25% of amount
  *
  * Examples:
  *   Trader $3    → We $3      (tier 1: exact copy)
  *   Trader $5    → We $5      (tier 1: exact copy)
  *   Trader $10   → We $5      (tier 2: $10 / 2)
  *   Trader $15   → We $7.50   (tier 2: $15 / 2)
- *   Trader $20   → We $2      (tier 3: 10% of $20)
- *   Trader $100  → We $10     (tier 3: 10% of $100)
+ *   Trader $20   → We $5      (tier 3: 25% of $20)
+ *   Trader $100  → We $25     (tier 3: 25% of $100)
  */
 export class PortfolioManager {
   /** Cached Safe USDC balance */
@@ -35,7 +35,7 @@ export class PortfolioManager {
       this.cachedBalance = await getUsdcBalance();
       logger.budget(`Safe USDC disponible: ${formatUsd(this.cachedBalance)}`);
       logger.budget(
-        `Estrategia de sizing: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 10%`
+        `Estrategia de sizing: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 25%`
       );
     } catch (err) {
       logger.error(
@@ -51,7 +51,7 @@ export class PortfolioManager {
    * Tiers:
    *   ≤ $5       → exact copy (1:1)
    *   $5 to $15  → amount / 2
-   *   > $15      → 10% of amount
+   *   > $15      → 25% of amount
    */
   calculateTradeSize(traderSizeUsdc: number): number {
     let ourSize: number;
@@ -63,8 +63,8 @@ export class PortfolioManager {
       // Tier 2: mitad del importe
       ourSize = traderSizeUsdc / 2;
     } else {
-      // Tier 3: 10% del importe
-      ourSize = traderSizeUsdc * 0.10;
+      // Tier 3: 25% del importe
+      ourSize = traderSizeUsdc * 0.25;
     }
 
     // Redondear a 2 decimales (centavos USDC)
@@ -78,7 +78,7 @@ export class PortfolioManager {
       return 0;
     }
 
-    const tier = traderSizeUsdc <= 5 ? "exacta" : traderSizeUsdc <= 15 ? "÷2" : "10%";
+    const tier = traderSizeUsdc <= 5 ? "exacta" : traderSizeUsdc <= 15 ? "÷2" : "25%";
     logger.debug(`Sizing: trader=${formatUsd(traderSizeUsdc)} → nuestro=${formatUsd(ourSize)} (${tier})`);
 
     return ourSize;

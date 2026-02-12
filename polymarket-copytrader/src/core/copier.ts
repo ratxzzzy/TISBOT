@@ -47,7 +47,7 @@ export class CopyTrader {
     logger.info(`Target wallet: ${shortAddress(config.walletToCopy)}`);
 
     logger.info(
-      `Sizing por tramos: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 10%`
+      `Sizing por tramos: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 25%`
     );
     logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)} | Slippage: ${config.slippageTolerance}%`);
 
