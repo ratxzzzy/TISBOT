@@ -46,8 +46,9 @@ export class CopyTrader {
     logger.info("========================================");
     logger.info(`Target wallet: ${shortAddress(config.walletToCopy)}`);
 
+    const ratio = config.maxOurPositionUsdc / config.traderMaxPositionUsdc;
     logger.info(
-      `Sizing por tramos: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 25%`
+      `Sizing proporcional: ratio=${(ratio * 100).toFixed(2)}% (MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)})`
     );
     logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)} | Slippage: ${config.slippageTolerance}%`);
 
@@ -93,10 +94,10 @@ export class CopyTrader {
       `Target ${trade.side} $${trade.usdcSize.toFixed(2)} of "${trade.outcome}" in "${trade.title}" @ $${trade.price.toFixed(4)}`
     );
 
-    // Apply tiered sizing to both BUY and SELL
+    // Apply proportional sizing to both BUY and SELL
     let scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
     if (scaledSize === 0) {
-      logger.debug("Tiered trade size is 0 (below minimum), skipping");
+      logger.debug("Proportional trade size is 0 (below minimum), skipping");
       return;
     }
 

@@ -66,25 +66,17 @@ export async function executeTrade(
         ? scaledAmountUsdc / trade.price
         : scaledAmountUsdc / roundedPrice;
 
-    // Polymarket CLOB requires minimum 5 shares per order
-    const MIN_SHARES = 5;
+    // Polymarket CLOB minimum: skip orders below 1 share (don't inflate)
+    const MIN_SHARES = 1;
     if (shares < MIN_SHARES) {
-      if (side === Side.BUY) {
-        // Bump up to minimum shares and adjust USDC accordingly
-        shares = MIN_SHARES;
-        scaledAmountUsdc = shares * roundedPrice;
-        logger.debug(`Bumped to ${MIN_SHARES} shares minimum (${formatUsd(scaledAmountUsdc)})`);
-      } else {
-        // For SELLs we can't sell more than we have
-        logger.warn(`SELL skipped: only ${shares.toFixed(2)} shares (min ${MIN_SHARES})`);
-        return {
-          success: false,
-          orderId: null,
-          executedAmountUsdc: 0,
-          executedPrice: 0,
-          errorMessage: `Only ${shares.toFixed(2)} shares, minimum is ${MIN_SHARES}`,
-        };
-      }
+      logger.warn(`${side} skipped: only ${shares.toFixed(2)} shares (min ${MIN_SHARES})`);
+      return {
+        success: false,
+        orderId: null,
+        executedAmountUsdc: 0,
+        executedPrice: 0,
+        errorMessage: `Only ${shares.toFixed(2)} shares, minimum is ${MIN_SHARES}`,
+      };
     }
 
     logger.copy(
