@@ -1,53 +1,32 @@
 import { config } from "../config";
 import { logger } from "../utils/logger";
-import { formatUsd, formatPercent } from "../utils/helpers";
+import { formatUsd } from "../utils/helpers";
 import { getUsdcBalance } from "../services/wallet/signer";
 
-// 🔧 FIX: Reescritura completa del PortfolioManager.
-// ANTES: usaba Math.min(traderSize, $5) — un cap plano sin proporcionalidad.
-//        El copyRatio se calculaba pero NUNCA se aplicaba al sizing.
-//        totalBudgetUsdc se definía en config pero NUNCA se enforceaba.
-//        getPortfolioValue() se llamaba pero el ratio resultante se ignoraba en calculateTradeSize().
-// AHORA: sizing 100% proporcional al trader copiado usando ratio dinámico configurado por el operador.
-
 /**
- * Manages proportional position sizing for copytrading.
+ * Manages position sizing for copytrading using a tiered strategy.
  *
- * The sizing is 100% proportional to the copied trader:
- *   RATIO = MAX_OUR_POSITION / TRADER_MAX_POSITION
- *   ourSize = traderSize * RATIO
+ * Sizing tiers (applied to both BUY and SELL):
+ *   Trader ≤ $5      → copy exact amount
+ *   $5 < Trader ≤ $15 → copy amount / 2
+ *   Trader > $15      → copy 10% of amount
  *
- * Example with MAX_OUR=10, TRADER_MAX=200 → RATIO=0.05:
- *   Trader $200 → We $10 (our max)
- *   Trader $100 → We $5
- *   Trader $50  → We $2.50
- *   Trader $10  → We $0.50
- *
- * Safety: if trader exceeds TRADER_MAX_POSITION, we cap at MAX_OUR_POSITION
- * and log an alert (rather than auto-updating the ratio).
+ * Examples:
+ *   Trader $3    → We $3      (tier 1: exact copy)
+ *   Trader $5    → We $5      (tier 1: exact copy)
+ *   Trader $10   → We $5      (tier 2: $10 / 2)
+ *   Trader $15   → We $7.50   (tier 2: $15 / 2)
+ *   Trader $20   → We $2      (tier 3: 10% of $20)
+ *   Trader $100  → We $10     (tier 3: 10% of $100)
  */
 export class PortfolioManager {
   /** Cached Safe USDC balance */
   private cachedBalance: number = 0;
 
-  // 🔧 FIX: Ratio calculado desde config, no desde portfolio value del trader
-  /** Dynamic copy ratio = MAX_OUR_POSITION / TRADER_MAX_POSITION */
-  private _ratio: number;
-
-  constructor() {
-    this._ratio = config.maxOurPositionUsdc / config.traderMaxPositionUsdc;
-  }
-
-  get ratio(): number {
-    return this._ratio;
-  }
-
   get availableBudget(): number {
     return this.cachedBalance;
   }
 
-  // 🔧 FIX: Reemplaza refreshTargetPortfolio() que llamaba a getPortfolioValue()
-  // y calculaba un ratio que nunca se usaba. Ahora solo refresca el balance.
   /**
    * Refreshes the cached Safe USDC balance from chain.
    */
@@ -56,7 +35,7 @@ export class PortfolioManager {
       this.cachedBalance = await getUsdcBalance();
       logger.budget(`Safe USDC disponible: ${formatUsd(this.cachedBalance)}`);
       logger.budget(
-        `Ratio proporcional: ${formatPercent(this._ratio)} (MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)})`
+        `Estrategia de sizing: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 10%`
       );
     } catch (err) {
       logger.error(
@@ -66,33 +45,26 @@ export class PortfolioManager {
     }
   }
 
-  // 🔧 FIX: Reescritura total de calculateTradeSize().
-  // ANTES: Math.min(originalSizeUsdc, config.maxSingleTradeUsdc) — cap plano a $5.
-  // AHORA: ourSize = traderSize * RATIO — proporcionalidad exacta.
   /**
-   * Calculates the proportional copy trade size.
+   * Calculates the copy trade size using tiered strategy.
    *
-   * Logic:
-   *   1. ourSize = traderSize * RATIO (exact proportional)
-   *   2. If trader exceeds TRADER_MAX_POSITION → cap at MAX_OUR_POSITION + alert
-   *   3. If ourSize < MIN_POSITION_SIZE → skip (return 0)
-   *
-   * No artificial caps. The proportion is exact.
+   * Tiers:
+   *   ≤ $5       → exact copy (1:1)
+   *   $5 to $15  → amount / 2
+   *   > $15      → 10% of amount
    */
   calculateTradeSize(traderSizeUsdc: number): number {
     let ourSize: number;
 
-    if (traderSizeUsdc > config.traderMaxPositionUsdc) {
-      // Seguridad: trader superó su máximo histórico conocido.
-      // Capeamos a nuestro máximo absoluto en lugar de auto-actualizar el ratio.
-      ourSize = config.maxOurPositionUsdc;
-      logger.warn(
-        `ALERTA: Trader superó su máximo histórico! Trade=${formatUsd(traderSizeUsdc)} > TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)}. ` +
-        `Capeando a nuestro máximo: ${formatUsd(ourSize)}. Considera actualizar TRADER_MAX_POSITION_USDC.`
-      );
+    if (traderSizeUsdc <= 5) {
+      // Tier 1: copia exacta
+      ourSize = traderSizeUsdc;
+    } else if (traderSizeUsdc <= 15) {
+      // Tier 2: mitad del importe
+      ourSize = traderSizeUsdc / 2;
     } else {
-      // Proporción exacta: sin caps artificiales
-      ourSize = traderSizeUsdc * this._ratio;
+      // Tier 3: 10% del importe
+      ourSize = traderSizeUsdc * 0.10;
     }
 
     // Redondear a 2 decimales (centavos USDC)
@@ -101,10 +73,13 @@ export class PortfolioManager {
     // Protección mínima: no abrir posiciones ridículas
     if (ourSize < config.minPositionSizeUsdc) {
       logger.debug(
-        `Trade proporcional ${formatUsd(ourSize)} por debajo del mínimo ${formatUsd(config.minPositionSizeUsdc)}, skipping`
+        `Trade ${formatUsd(ourSize)} por debajo del mínimo ${formatUsd(config.minPositionSizeUsdc)}, skipping`
       );
       return 0;
     }
+
+    const tier = traderSizeUsdc <= 5 ? "exacta" : traderSizeUsdc <= 15 ? "÷2" : "10%";
+    logger.debug(`Sizing: trader=${formatUsd(traderSizeUsdc)} → nuestro=${formatUsd(ourSize)} (${tier})`);
 
     return ourSize;
   }

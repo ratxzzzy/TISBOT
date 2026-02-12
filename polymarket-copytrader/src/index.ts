@@ -34,15 +34,6 @@ function validateConfig(): void {
     throw new Error(`Invalid EOA address: ${config.eoaAddress}`);
   }
 
-  // 🔧 FIX: Validar los nuevos parámetros de sizing proporcional
-  if (config.maxOurPositionUsdc <= 0) {
-    throw new Error("MAX_OUR_POSITION_USDC must be greater than 0");
-  }
-
-  if (config.traderMaxPositionUsdc <= 0) {
-    throw new Error("TRADER_MAX_POSITION_USDC must be greater than 0");
-  }
-
   if (config.minPositionSizeUsdc < 0) {
     throw new Error("MIN_POSITION_SIZE_USDC must be >= 0");
   }
@@ -102,9 +93,8 @@ async function main(): Promise<void> {
     );
   }
 
-  // 🔧 FIX: Log the proportional sizing configuration
-  const ratio = config.maxOurPositionUsdc / config.traderMaxPositionUsdc;
-  logger.info(`Proportional sizing: MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)} = ratio ${ratio.toFixed(4)}`);
+  // Sizing por tramos
+  logger.info(`Sizing por tramos: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 10%`);
   logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)}`);
 
   // Step 4: Initialize Polymarket CLOB client

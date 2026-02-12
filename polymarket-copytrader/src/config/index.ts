@@ -36,16 +36,6 @@ export const config = {
   // Copytrading target
   walletToCopy: requireEnv("WALLET_TO_COPY").toLowerCase(),
 
-  // 🔧 FIX: Nuevo sistema de sizing proporcional dinámico.
-  // Reemplaza el anterior totalBudgetUsdc / minTradeSizeUsdc / maxSingleTradeUsdc
-  // que usaba un cap fijo de $5 sin proporcionalidad real.
-
-  // Nuestro máximo absoluto por posición en USDC
-  maxOurPositionUsdc: parseFloat(optionalEnv("MAX_OUR_POSITION_USDC", "10")),
-
-  // Posición máxima histórica conocida del trader copiado en USDC
-  traderMaxPositionUsdc: parseFloat(optionalEnv("TRADER_MAX_POSITION_USDC", "200")),
-
   // Tamaño mínimo de posición — por debajo no se abre trade
   minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "0.50")),
 

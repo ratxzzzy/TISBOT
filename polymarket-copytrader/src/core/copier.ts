@@ -1,6 +1,6 @@
 import { config } from "../config";
 import { logger } from "../utils/logger";
-import { formatUsd, formatPercent, shortAddress } from "../utils/helpers";
+import { formatUsd, shortAddress } from "../utils/helpers";
 import { ActivityMonitor } from "../services/blockchain/monitor";
 import type { DetectedTrade } from "../services/blockchain/monitor";
 import { executeTrade } from "../services/polymarket/executor";
@@ -46,10 +46,8 @@ export class CopyTrader {
     logger.info("========================================");
     logger.info(`Target wallet: ${shortAddress(config.walletToCopy)}`);
 
-    // 🔧 FIX: Mostrar configuración de sizing proporcional en lugar del cap fijo anterior
     logger.info(
-      `Proportional sizing: ratio=${formatPercent(this.portfolio.ratio)} ` +
-      `(MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)})`
+      `Sizing por tramos: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 10%`
     );
     logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)} | Slippage: ${config.slippageTolerance}%`);
 
@@ -95,10 +93,15 @@ export class CopyTrader {
       `Target ${trade.side} $${trade.usdcSize.toFixed(2)} of "${trade.outcome}" in "${trade.title}" @ $${trade.price.toFixed(4)}`
     );
 
-    let scaledSize: number;
+    // Apply tiered sizing to both BUY and SELL
+    let scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
+    if (scaledSize === 0) {
+      logger.debug("Tiered trade size is 0 (below minimum), skipping");
+      return;
+    }
 
     if (trade.side === "SELL") {
-      // For SELLs, check if we actually hold this token before attempting to sell
+      // For SELLs, check token balance and cap at what we actually hold
       try {
         const tokenBalance = await getConditionalTokenBalance(trade.tokenId);
         if (tokenBalance === 0n) {
@@ -106,19 +109,21 @@ export class CopyTrader {
           return;
         }
 
-        // Sell what we have: token balance (in shares) * price = USDC value
-        // ConditionalTokens use 6 decimals (like USDC)
+        // Cap sell at our actual holdings
         const sharesWeHold = Number(tokenBalance) / 1e6;
-        scaledSize = Math.round(sharesWeHold * trade.price * 100) / 100;
+        const holdingsValueUsdc = Math.round(sharesWeHold * trade.price * 100) / 100;
 
-        // 🔧 FIX: Usar minPositionSizeUsdc en lugar del viejo minTradeSizeUsdc
+        if (scaledSize > holdingsValueUsdc) {
+          scaledSize = holdingsValueUsdc;
+        }
+
         if (scaledSize < config.minPositionSizeUsdc) {
           logger.debug(`SELL too small: ${formatUsd(scaledSize)} (have ${sharesWeHold.toFixed(2)} shares)`);
           return;
         }
 
         logger.copy(
-          `Copying SELL: ${sharesWeHold.toFixed(2)} shares (~${formatUsd(scaledSize)}) of token ${shortAddress(trade.tokenId)}`
+          `Copying SELL: ${formatUsd(scaledSize)} (trader=${formatUsd(trade.usdcSize)}) of token ${shortAddress(trade.tokenId)}`
         );
       } catch (err) {
         logger.error(
@@ -128,15 +133,8 @@ export class CopyTrader {
         return;
       }
     } else {
-      // 🔧 FIX: BUY usa sizing proporcional dinámico en lugar del cap plano anterior
-      scaledSize = this.portfolio.calculateTradeSize(trade.usdcSize);
-      if (scaledSize === 0) {
-        logger.debug("Proportional trade size is 0 (below minimum), skipping");
-        return;
-      }
-
       logger.copy(
-        `Copying BUY: ${formatUsd(scaledSize)} (trader=${formatUsd(trade.usdcSize)} x ratio=${formatPercent(this.portfolio.ratio)})`
+        `Copying BUY: ${formatUsd(scaledSize)} (trader=${formatUsd(trade.usdcSize)})`
       );
 
       // Check budget for buys
