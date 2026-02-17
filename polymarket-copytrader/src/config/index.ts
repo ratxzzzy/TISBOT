@@ -36,9 +36,8 @@ export const config = {
   // Copytrading target
   walletToCopy: requireEnv("WALLET_TO_COPY").toLowerCase(),
 
-  // Proportional sizing: RATIO = MAX_OUR / TRADER_MAX
-  maxOurPositionUsdc: parseFloat(optionalEnv("MAX_OUR_POSITION_USDC", "10")),
-  traderMaxPositionUsdc: parseFloat(optionalEnv("TRADER_MAX_POSITION_USDC", "200")),
+  // Copy sizing: flat percentage of the trader's amount
+  copyPercentage: parseFloat(optionalEnv("COPY_PERCENTAGE", "10")),
 
   // Tamaño mínimo de posición — por debajo no se abre trade
   minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "0.50")),

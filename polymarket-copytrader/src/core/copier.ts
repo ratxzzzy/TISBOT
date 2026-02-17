@@ -46,9 +46,8 @@ export class CopyTrader {
     logger.info("========================================");
     logger.info(`Target wallet: ${shortAddress(config.walletToCopy)}`);
 
-    const ratio = config.maxOurPositionUsdc / config.traderMaxPositionUsdc;
     logger.info(
-      `Sizing proporcional: ratio=${(ratio * 100).toFixed(2)}% (MAX_OUR=${formatUsd(config.maxOurPositionUsdc)} / TRADER_MAX=${formatUsd(config.traderMaxPositionUsdc)})`
+      `Sizing: ${config.copyPercentage}% del importe del trader`
     );
     logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)} | Slippage: ${config.slippageTolerance}%`);
 
