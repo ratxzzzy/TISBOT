@@ -53,7 +53,7 @@ export const config = {
   MAX_SINGLE_TRADE_USDC: mustNumber(optionalEnv("MAX_SINGLE_TRADE_USDC", "25"), "MAX_SINGLE_TRADE_USDC"),
 
   // Trading
-  slippageTolerance: parseFloat(optionalEnv("SLIPPAGE_TOLERANCE", "2")),
+  slippageTolerance: parseFloat(optionalEnv("SLIPPAGE_TOLERANCE", "5")),
 
   // Polymarket contracts on Polygon
   contracts: {
