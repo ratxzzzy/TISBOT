@@ -93,8 +93,7 @@ async function main(): Promise<void> {
     );
   }
 
-  // Sizing por tramos
-  logger.info(`Sizing por tramos: ≤$5 → copia exacta | $5-$15 → mitad | >$15 → 25%`);
+  logger.info(`Sizing: ${config.copyPercentage}% del importe del trader`);
   logger.info(`Min position: ${formatUsd(config.minPositionSizeUsdc)}`);
 
   // Step 4: Initialize Polymarket CLOB client

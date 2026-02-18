@@ -18,10 +18,6 @@ export interface ExecutionResult {
   skippedReason?: string;
 }
 
-function assertFinite(n: number, name: string) {
-  if (!Number.isFinite(n) || n <= 0) throw new Error(`${name} invalid: ${n}`);
-}
-
 /**
  * Executes a copy trade on Polymarket via the CLOB API.
  *
@@ -32,14 +28,10 @@ function assertFinite(n: number, name: string) {
  * We do NOT validate against the order book because these fast-moving
  * markets often show stale best-ask/bid prices that differ wildly
  * from the price the target actually traded at.
- *
- * @param remainingBudget  Optional remaining USDC budget; used to revalidate
- *                         after the minimum-shares bump.
  */
 export async function executeTrade(
   trade: ParsedTrade,
   scaledAmountUsdc: number,
-  remainingBudget?: number
 ): Promise<ExecutionResult> {
   try {
     const client = await getClobClient();
@@ -73,47 +65,7 @@ export async function executeTrade(
         ? scaledAmountUsdc / trade.price
         : scaledAmountUsdc / roundedPrice;
 
-    // ── BUY: bump to minimum 5 shares if needed, then revalidate ──
-    const MIN_SHARES = 5;
-    if (side === Side.BUY && scaledShares < MIN_SHARES) {
-      scaledShares = MIN_SHARES;
-      scaledAmountUsdc = scaledShares * roundedPrice;
-
-      assertFinite(scaledShares, "scaledShares");
-      assertFinite(scaledAmountUsdc, "scaledAmountUsdc");
-
-      // Revalidate MAX_SINGLE_TRADE_USDC AFTER the bump
-      if (scaledAmountUsdc > config.MAX_SINGLE_TRADE_USDC) {
-        logger.warn(
-          `Trade skipped: bumped min shares exceeds MAX_SINGLE_TRADE_USDC (${scaledAmountUsdc.toFixed(2)} > ${config.MAX_SINGLE_TRADE_USDC})`
-        );
-        return {
-          success: false,
-          orderId: null,
-          executedAmountUsdc: 0,
-          executedPrice: 0,
-          errorMessage: null,
-          skippedReason: "max_single_trade_exceeded_after_bump",
-        };
-      }
-
-      // Revalidate remaining budget AFTER the bump
-      if (remainingBudget !== undefined && scaledAmountUsdc > remainingBudget) {
-        logger.warn(
-          `Trade skipped: bumped min shares exceeds remaining budget (${scaledAmountUsdc.toFixed(2)} > ${remainingBudget.toFixed(2)})`
-        );
-        return {
-          success: false,
-          orderId: null,
-          executedAmountUsdc: 0,
-          executedPrice: 0,
-          errorMessage: null,
-          skippedReason: "budget_exceeded_after_bump",
-        };
-      }
-    }
-
-    // SELL: skip orders below 1 share (don't inflate sells)
+    // SELL: skip orders below 1 share
     if (side === Side.SELL && scaledShares < 1) {
       logger.warn(`SELL skipped: only ${scaledShares.toFixed(2)} shares (min 1)`);
       return {

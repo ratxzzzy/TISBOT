@@ -177,7 +177,6 @@ export class CopyTrader {
     const result = await executeTrade(
       originalTrade,
       scaledAmountUsdc,
-      this.portfolio.availableBudget
     );
 
     if (result.success) {
