@@ -43,7 +43,7 @@ export const config = {
   walletToCopy: requireEnv("WALLET_TO_COPY").toLowerCase(),
 
   // Copy sizing: flat percentage of the trader's amount
-  copyPercentage: parseFloat(optionalEnv("COPY_PERCENTAGE", "10")),
+  copyPercentage: parseFloat(optionalEnv("COPY_PERCENTAGE", "20")),
 
   // Tamaño mínimo de posición — por debajo no se abre trade
   minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "0.50")),
