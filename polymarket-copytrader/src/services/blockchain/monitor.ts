@@ -1,8 +1,11 @@
 import { config } from "../../config";
 import { logger } from "../../utils/logger";
 import { shortAddress, sleep } from "../../utils/helpers";
+import { fetchJsonWithRetry } from "../../utils/http";
+import { JsonStateStore } from "./stateStore";
 
 const DATA_API_BASE = "https://data-api.polymarket.com";
+const MAX_SEEN = 2000; // rolling window size
 
 /**
  * A trade detected from the Polymarket activity API.
@@ -34,6 +37,23 @@ export interface DetectedTrade {
 
 type TradeCallback = (trade: DetectedTrade) => void;
 
+/** Raw activity entry from the Polymarket Data API */
+interface ActivityEntry {
+  transactionHash: string;
+  type: string;
+  side: string;
+  size: string;
+  usdcSize: string;
+  price: string;
+  asset: string;
+  outcome: string;
+  title: string;
+  conditionId: string;
+  timestamp: string;
+  proxyWallet: string;
+  [key: string]: unknown;
+}
+
 /**
  * Monitors trades from the target wallet by polling the Polymarket Data API.
  *
@@ -51,13 +71,26 @@ export class ActivityMonitor {
   private running: boolean = false;
   private callback: TradeCallback | null = null;
   private targetAddress: string;
-  private lastSeenTimestamp: number = 0;
-  private seenTxHashes: Set<string> = new Set();
+  private lastSeenTimestamp: number;
+  private seenTxHashes: Set<string>;
   private pollIntervalMs: number;
+  private store: JsonStateStore;
 
   constructor(pollIntervalMs: number = 5000) {
     this.targetAddress = config.walletToCopy.toLowerCase();
     this.pollIntervalMs = pollIntervalMs;
+
+    // Load persisted state so we don't re-execute trades after restart
+    this.store = new JsonStateStore();
+    const persisted = this.store.load();
+    this.lastSeenTimestamp = persisted.lastSeenTimestamp || 0;
+    this.seenTxHashes = new Set<string>(persisted.seenTxHashes || []);
+
+    if (this.lastSeenTimestamp > 0) {
+      logger.info(
+        `Restored monitor state: ${this.seenTxHashes.size} seen hashes, last ts=${new Date(this.lastSeenTimestamp * 1000).toISOString()}`
+      );
+    }
   }
 
   /**
@@ -101,6 +134,7 @@ export class ActivityMonitor {
           this.lastSeenTimestamp = ts;
         }
       }
+      this.persistState();
       logger.info(
         `Seeded with ${activities.length} existing trades, latest at ${new Date(this.lastSeenTimestamp * 1000).toISOString()}`
       );
@@ -110,7 +144,9 @@ export class ActivityMonitor {
         err instanceof Error ? err.message : err
       );
       // Use current time minus 60s as baseline
-      this.lastSeenTimestamp = Math.floor(Date.now() / 1000) - 60;
+      if (this.lastSeenTimestamp === 0) {
+        this.lastSeenTimestamp = Math.floor(Date.now() / 1000) - 60;
+      }
     }
   }
 
@@ -142,6 +178,8 @@ export class ActivityMonitor {
       .filter((a) => a.type === "TRADE")
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
 
+    let stateChanged = false;
+
     for (const act of sorted) {
       // Skip already-seen trades
       if (this.seenTxHashes.has(act.transactionHash)) continue;
@@ -154,6 +192,14 @@ export class ActivityMonitor {
       this.seenTxHashes.add(act.transactionHash);
       if (ts > this.lastSeenTimestamp) {
         this.lastSeenTimestamp = ts;
+      }
+      stateChanged = true;
+
+      // Trim rolling window
+      if (this.seenTxHashes.size > MAX_SEEN) {
+        const arr = Array.from(this.seenTxHashes);
+        const keep = arr.slice(arr.length - MAX_SEEN);
+        this.seenTxHashes = new Set(keep);
       }
 
       // Convert to our DetectedTrade format
@@ -179,15 +225,14 @@ export class ActivityMonitor {
       }
     }
 
-    // Keep seenTxHashes from growing unbounded (keep last 500)
-    if (this.seenTxHashes.size > 500) {
-      const arr = Array.from(this.seenTxHashes);
-      this.seenTxHashes = new Set(arr.slice(-300));
+    // Persist state to disk whenever we saw new trades
+    if (stateChanged) {
+      this.persistState();
     }
   }
 
   /**
-   * Fetches recent activity from the Polymarket Data API
+   * Fetches recent activity from the Polymarket Data API with timeout + retry.
    */
   private async fetchActivity(limit: number): Promise<ActivityEntry[]> {
     const url = `${DATA_API_BASE}/activity?${new URLSearchParams({
@@ -195,28 +240,23 @@ export class ActivityMonitor {
       limit: String(limit),
     })}`;
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Activity API error: ${response.status} ${response.statusText}`);
-    }
-
-    return (await response.json()) as ActivityEntry[];
+    return fetchJsonWithRetry<ActivityEntry[]>(url, {}, 12_000, 4);
   }
-}
 
-/** Raw activity entry from the Polymarket Data API */
-interface ActivityEntry {
-  transactionHash: string;
-  type: string;
-  side: string;
-  size: string;
-  usdcSize: string;
-  price: string;
-  asset: string;
-  outcome: string;
-  title: string;
-  conditionId: string;
-  timestamp: string;
-  proxyWallet: string;
-  [key: string]: unknown;
+  /**
+   * Persists the current monitor state to disk.
+   */
+  private persistState(): void {
+    try {
+      this.store.save({
+        lastSeenTimestamp: this.lastSeenTimestamp,
+        seenTxHashes: Array.from(this.seenTxHashes),
+      });
+    } catch (err) {
+      logger.warn(
+        "Failed to persist monitor state",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
 }

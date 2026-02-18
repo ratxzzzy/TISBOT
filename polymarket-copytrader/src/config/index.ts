@@ -15,6 +15,12 @@ function optionalEnv(key: string, fallback: string): string {
   return process.env[key] || fallback;
 }
 
+function mustNumber(v: string | undefined, name: string): number {
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`Config ${name} must be a number`);
+  return n;
+}
+
 export const config = {
   // Polygon RPC
   polygonWsUrl: requireEnv("POLYGON_RPC_URL"),
@@ -42,6 +48,10 @@ export const config = {
   // Tamaño mínimo de posición — por debajo no se abre trade
   minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "0.50")),
 
+  // Budget guardrails
+  TOTAL_BUDGET_USDC: mustNumber(optionalEnv("TOTAL_BUDGET_USDC", "100"), "TOTAL_BUDGET_USDC"),
+  MAX_SINGLE_TRADE_USDC: mustNumber(optionalEnv("MAX_SINGLE_TRADE_USDC", "25"), "MAX_SINGLE_TRADE_USDC"),
+
   // Trading
   slippageTolerance: parseFloat(optionalEnv("SLIPPAGE_TOLERANCE", "2")),
 
@@ -65,5 +75,10 @@ export const config = {
   wsReconnectDelayMs: 5000,
   maxRetries: 3,
 } as const;
+
+// Startup validation
+if (config.MAX_SINGLE_TRADE_USDC > config.TOTAL_BUDGET_USDC) {
+  throw new Error("Config invalid: MAX_SINGLE_TRADE_USDC > TOTAL_BUDGET_USDC");
+}
 
 export type Config = typeof config;

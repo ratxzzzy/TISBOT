@@ -174,7 +174,11 @@ export class CopyTrader {
       `Executing copy: ${originalTrade.tradeType} ${formatUsd(scaledAmountUsdc)} | Token: ${shortAddress(originalTrade.tokenId)}`
     );
 
-    const result = await executeTrade(originalTrade, scaledAmountUsdc);
+    const result = await executeTrade(
+      originalTrade,
+      scaledAmountUsdc,
+      this.portfolio.availableBudget
+    );
 
     if (result.success) {
       // Refresh cached balance from chain
