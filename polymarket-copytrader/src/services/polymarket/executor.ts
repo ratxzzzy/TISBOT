@@ -83,6 +83,13 @@ export async function executeTrade(
       `Placing ${side} ${roundedShares.toFixed(2)} shares @ ${roundedPrice.toFixed(4)} (${formatUsd(scaledAmountUsdc)}) [target: ${trade.price.toFixed(4)}]`
     );
 
+    // Polymarket enforces a $1 minimum for marketable BUY orders.
+    // Bump small BUY orders up to $1 so they don't get rejected.
+    if (side === Side.BUY && scaledAmountUsdc < 1) {
+      logger.info(`BUY amount ${formatUsd(scaledAmountUsdc)} below $1 minimum, bumping to $1.00`);
+      scaledAmountUsdc = 1;
+    }
+
     // FOK via createAndPostMarketOrder:
     //   BUY  → amount = USDC to spend
     //   SELL → amount = shares to sell
