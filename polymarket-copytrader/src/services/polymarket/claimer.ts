@@ -28,6 +28,9 @@ const NEG_RISK_REDEEM_ABI = [
 
 // ── AutoClaimer ─────────────────────────────────────────────────────
 
+// Clock minutes at which the auto-claimer fires: :04, :19, :34, :49 (4×/hour)
+const TARGET_MINUTES = [4, 19, 34, 49] as const;
+
 /**
  * Periodically claims (redeems) resolved winning positions on Polymarket.
  *
@@ -38,33 +41,70 @@ const NEG_RISK_REDEEM_ABI = [
  *  - Standard markets → CTF.redeemPositions(USDC, 0x0, conditionId, [1,2])
  *  - NegRisk markets  → NegRiskAdapter.redeemPositions(conditionId, amounts)
  */
-export class AutoClaimer {
-  private intervalHandle: ReturnType<typeof setInterval> | null = null;
-  private readonly intervalMs: number;
-  private claiming = false;
 
-  constructor(intervalMs: number = 2 * 60 * 60 * 1000) {
-    this.intervalMs = intervalMs;
-  }
+export class AutoClaimer {
+  private timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  private claiming = false;
+  private running = false;
 
   async start(): Promise<void> {
-    const hours = (this.intervalMs / (60 * 60 * 1000)).toFixed(1);
-    logger.info(`AutoClaimer started — checking every ${hours}h`);
+    this.running = true;
+    logger.info(
+      "AutoClaimer started — scheduled at :04, :19, :34, :49 each hour"
+    );
 
-    // Run once immediately, then on interval
+    // Run once immediately on startup, then align to clock targets
     await this.claimAll();
-
-    this.intervalHandle = setInterval(async () => {
-      await this.claimAll();
-    }, this.intervalMs);
+    this.scheduleNext();
   }
 
   stop(): void {
-    if (this.intervalHandle) {
-      clearInterval(this.intervalHandle);
-      this.intervalHandle = null;
+    this.running = false;
+    if (this.timeoutHandle) {
+      clearTimeout(this.timeoutHandle);
+      this.timeoutHandle = null;
     }
     logger.info("AutoClaimer stopped");
+  }
+
+  /**
+   * Calculates the milliseconds until the next target minute
+   * (:04, :19, :34, or :49) and sets a one-shot timeout.
+   * After each execution it reschedules itself, so the chain
+   * continues indefinitely as long as the claimer is running.
+   */
+  private scheduleNext(): void {
+    if (!this.running) return;
+
+    const now = new Date();
+    const currentMinute = now.getMinutes();
+
+    // Pick the first target minute still in the future within this hour
+    let nextMinute = (TARGET_MINUTES as readonly number[]).find(
+      (m) => m > currentMinute
+    );
+    let hoursToAdd = 0;
+
+    if (nextMinute === undefined) {
+      // All targets have passed — wrap to the first target of the next hour
+      nextMinute = TARGET_MINUTES[0];
+      hoursToAdd = 1;
+    }
+
+    const nextTime = new Date(now);
+    nextTime.setHours(now.getHours() + hoursToAdd, nextMinute, 0, 0);
+
+    const msUntilNext = nextTime.getTime() - now.getTime();
+    const minsUntilNext = Math.round(msUntilNext / 60_000);
+
+    logger.info(
+      `AutoClaimer: next run at ${nextTime.toTimeString().slice(0, 5)} (~${minsUntilNext} min)`
+    );
+
+    this.timeoutHandle = setTimeout(async () => {
+      await this.claimAll();
+      this.scheduleNext();
+    }, msUntilNext);
   }
 
   // ── Main claim cycle ────────────────────────────────────────────

@@ -99,8 +99,8 @@ async function main(): Promise<void> {
   await getClobClient();
   logger.success("Polymarket CLOB client ready");
 
-  // Step 5: Start auto-claimer for resolved winning positions (every 2h)
-  autoClaimer = new AutoClaimer(config.claimIntervalMs);
+  // Step 5: Start auto-claimer — fires at :04, :19, :34, :49 each hour
+  autoClaimer = new AutoClaimer();
   await autoClaimer.start();
 
   // Step 6: Start the copytrader

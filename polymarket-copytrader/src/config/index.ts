@@ -73,7 +73,6 @@ export const config = {
 
   // Timing
   portfolioRefreshIntervalMs: 60 * 60 * 1000, // 1 hour
-  claimIntervalMs: 2 * 60 * 60 * 1000, // 2 hours — auto-claim resolved positions
   wsReconnectDelayMs: 5000,
   maxRetries: 3,
 } as const;
