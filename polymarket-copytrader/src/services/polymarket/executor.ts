@@ -2,7 +2,7 @@ import { Side, OrderType } from "@polymarket/clob-client";
 import { config } from "../../config";
 import { logger } from "../../utils/logger";
 import { formatUsd, retryWithBackoff } from "../../utils/helpers";
-import { getClobClient, getOrderBook } from "./client";
+import { getClobClient, getOrderBook, getMarketInfo } from "./client";
 import type { ParsedTrade } from "./parser";
 
 /**
@@ -37,10 +37,20 @@ export async function executeTrade(
     const client = await getClobClient();
     const side = trade.tradeType === "BUY" ? Side.BUY : Side.SELL;
 
-    // Fetch order book only for tick size and negRisk metadata
+    // Fetch order book for negRisk metadata and fallback tick size
     const orderBook = await getOrderBook(trade.tokenId);
-    const tickSize = orderBook.tick_size || "0.01";
     const negRisk = orderBook.neg_risk || trade.isNegRisk;
+
+    // Use market's minimum_tick_size (authoritative) instead of order book tick_size.
+    // The order book sometimes returns a smaller tick_size than the market allows.
+    let tickSize = orderBook.tick_size || "0.01";
+    const conditionId = orderBook.market;
+    if (conditionId) {
+      const marketInfo = await getMarketInfo(conditionId);
+      if (marketInfo?.minimum_tick_size) {
+        tickSize = marketInfo.minimum_tick_size;
+      }
+    }
 
     // Use the target's price with slippage
     const slippageFactor = config.slippageTolerance / 100;
