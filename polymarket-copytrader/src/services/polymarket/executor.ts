@@ -59,7 +59,7 @@ export async function executeTrade(
     // Round price to tick size
     const roundedPrice = roundToTickSize(price, tickSize);
 
-    // Calculate number of shares
+    // Calculate number of shares (may be recalculated if amount is bumped)
     let scaledShares =
       side === Side.SELL
         ? scaledAmountUsdc / trade.price
@@ -84,53 +84,36 @@ export async function executeTrade(
     );
 
     // Polymarket enforces a $1 minimum for marketable (FOK) BUY orders.
-    // For BUY orders under $1, use GTC limit orders which have no minimum.
-    const useGtc = side === Side.BUY && scaledAmountUsdc < 1;
+    // Bump BUY amounts below $1 up to $1.
+    if (side === Side.BUY && scaledAmountUsdc < 1) {
+      logger.info(`BUY ${formatUsd(scaledAmountUsdc)} below $1 minimum, bumping to $1.00`);
+      scaledAmountUsdc = 1;
+      scaledShares = scaledAmountUsdc / roundedPrice;
+    }
+
+    const amount =
+      side === Side.BUY
+        ? Math.floor(scaledAmountUsdc * 100) / 100
+        : roundedShares;
 
     let result: any;
 
-    if (useGtc) {
-      // GTC limit order — uses `size` (shares), no $1 minimum
-      logger.info(`BUY ${formatUsd(scaledAmountUsdc)} below $1, using GTC limit order (${roundedShares} shares)`);
-      result = await retryWithBackoff(async () => {
-        return await client.createAndPostOrder(
-          {
-            tokenID: trade.tokenId,
-            price: roundedPrice,
-            side,
-            size: roundedShares,
-          },
-          {
-            tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
-            negRisk: negRisk,
-          },
-          OrderType.GTC,
-        );
-      }, config.maxRetries);
-    } else {
-      // FOK market order for amounts >= $1 and all SELLs
-      const amount =
-        side === Side.BUY
-          ? Math.floor(scaledAmountUsdc * 100) / 100
-          : roundedShares;
-
-      result = await retryWithBackoff(async () => {
-        return await client.createAndPostMarketOrder(
-          {
-            tokenID: trade.tokenId,
-            price: roundedPrice,
-            amount,
-            side,
-            orderType: OrderType.FOK,
-          },
-          {
-            tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
-            negRisk: negRisk,
-          },
-          OrderType.FOK
-        );
-      }, config.maxRetries);
-    }
+    result = await retryWithBackoff(async () => {
+      return await client.createAndPostMarketOrder(
+        {
+          tokenID: trade.tokenId,
+          price: roundedPrice,
+          amount,
+          side,
+          orderType: OrderType.FOK,
+        },
+        {
+          tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
+          negRisk: negRisk,
+        },
+        OrderType.FOK
+      );
+    }, config.maxRetries);
 
     if (result.success) {
       logger.success(
