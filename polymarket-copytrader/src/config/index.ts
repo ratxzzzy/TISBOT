@@ -59,6 +59,7 @@ export const config = {
   contracts: {
     ctfExchange: "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",
     negRiskCtfExchange: "0xC5d563A36AE78145C45a50134d48A1215220f80a",
+    negRiskAdapter: "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296",
     usdc: "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
     conditionalTokens: "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045",
   },
@@ -72,6 +73,7 @@ export const config = {
 
   // Timing
   portfolioRefreshIntervalMs: 60 * 60 * 1000, // 1 hour
+  claimIntervalMs: 2 * 60 * 60 * 1000, // 2 hours — auto-claim resolved positions
   wsReconnectDelayMs: 5000,
   maxRetries: 3,
 } as const;

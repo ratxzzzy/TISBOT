@@ -11,12 +11,10 @@ import {
 import { getClobClient } from "./services/polymarket/client";
 import { closeProviders } from "./services/blockchain/provider";
 import { CopyTrader } from "./core/copier";
-
-// 🔧 FIX: AutoRedeemer ELIMINADO — reciclaba USDC de posiciones resueltas de vuelta
-// al balance disponible, creando un feedback loop que amplificaba las pérdidas.
-// Las posiciones deben ser redimidas manualmente por el operador tras revisión.
+import { AutoClaimer } from "./services/polymarket/claimer";
 
 let copyTrader: CopyTrader | null = null;
+let autoClaimer: AutoClaimer | null = null;
 
 /**
  * Validates that all required configuration is present and correct.
@@ -101,8 +99,11 @@ async function main(): Promise<void> {
   await getClobClient();
   logger.success("Polymarket CLOB client ready");
 
-  // 🔧 FIX: AutoRedeemer ELIMINADO — Step 5 ahora es directamente el CopyTrader
-  // Step 5: Start the copytrader
+  // Step 5: Start auto-claimer for resolved winning positions (every 2h)
+  autoClaimer = new AutoClaimer(config.claimIntervalMs);
+  await autoClaimer.start();
+
+  // Step 6: Start the copytrader
   copyTrader = new CopyTrader();
   await copyTrader.start();
 }
@@ -112,6 +113,10 @@ async function main(): Promise<void> {
  */
 async function shutdown(signal: string): Promise<void> {
   logger.info(`\nReceived ${signal}, shutting down gracefully...`);
+
+  if (autoClaimer) {
+    autoClaimer.stop();
+  }
 
   if (copyTrader) {
     copyTrader.stop();
