@@ -45,8 +45,8 @@ export const config = {
   // Copy sizing: flat percentage of the trader's amount
   copyPercentage: parseFloat(optionalEnv("COPY_PERCENTAGE", "20")),
 
-  // Tamaño mínimo de posición — por debajo no se abre trade
-  minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "0.50")),
+  // Tamaño mínimo de posición — Polymarket rechaza ordenes < $1
+  minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "1")),
 
   // Budget guardrails
   TOTAL_BUDGET_USDC: mustNumber(optionalEnv("TOTAL_BUDGET_USDC", "100"), "TOTAL_BUDGET_USDC"),
