@@ -69,19 +69,25 @@ export async function getClobClient(): Promise<ClobClient> {
 }
 
 /**
- * Fetches all open positions for a given wallet address from the Polymarket Data API.
+ * Fetches positions for a given wallet address from the Polymarket Data API.
+ * Pass redeemableOnly=true to let the API filter server-side (avoids missing
+ * redeemable positions when the wallet has >500 total positions).
  */
 export async function getPositions(
-  walletAddress: string
+  walletAddress: string,
+  redeemableOnly = false
 ): Promise<PositionData[]> {
-  const url = `${DATA_API_BASE}/positions?${new URLSearchParams({
+  const params: Record<string, string> = {
     user: walletAddress.toLowerCase(),
     sizeThreshold: "0",
     limit: "500",
     offset: "0",
     sortBy: "CURRENT",
     sortDirection: "DESC",
-  })}`;
+  };
+  if (redeemableOnly) params["redeemable"] = "true";
+
+  const url = `${DATA_API_BASE}/positions?${new URLSearchParams(params)}`;
 
   const response = await fetch(url);
   if (!response.ok) {

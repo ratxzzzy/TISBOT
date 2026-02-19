@@ -119,8 +119,8 @@ export class AutoClaimer {
     try {
       logger.info("AutoClaimer: checking for redeemable positions...");
 
-      const positions = await getPositions(config.safeAddress);
-      const redeemable = positions.filter((p) => p.redeemable);
+      // redeemableOnly=true → API filters server-side, avoids the 500-row cap issue
+      const redeemable = await getPositions(config.safeAddress, true);
 
       if (redeemable.length === 0) {
         logger.info("AutoClaimer: no redeemable positions");
