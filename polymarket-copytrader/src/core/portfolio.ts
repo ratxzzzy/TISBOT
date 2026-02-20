@@ -63,8 +63,9 @@ export class PortfolioManager {
     // Round to 2 decimals (USDC cents)
     ourSize = Math.round(ourSize * 100) / 100;
 
-    // Skip trivially small trades
-    if (ourSize < config.minPositionSizeUsdc) {
+    // Skip zero-value or sub-minimum trades.
+    // With minPositionSizeUsdc=0, the executor handles $1 bumping for BUYs.
+    if (ourSize <= 0 || ourSize < config.minPositionSizeUsdc) {
       logger.debug(
         `Trade ${formatUsd(ourSize)} por debajo del mínimo ${formatUsd(config.minPositionSizeUsdc)}, skipping`
       );

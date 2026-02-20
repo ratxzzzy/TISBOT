@@ -21,13 +21,13 @@ export interface ExecutionResult {
 /**
  * Executes a copy trade on Polymarket via the CLOB API.
  *
- * Uses the target's exact price (with slippage) as a FOK limit order.
- * FOK (Fill-or-Kill) ensures the order either fills immediately and completely,
- * or is cancelled — no dangling open orders on the book.
+ * Strategy — Opción C (FOK → GTC fallback):
+ *   1. Intenta FOK (Fill-or-Kill): se llena al instante o se cancela.
+ *   2. Si FOK falla (sin liquidez inmediata), coloca una orden GTC (Good-Till-Cancel)
+ *      con precio límite y programa su auto-cancelación tras `config.gtcTtlMs` ms.
  *
- * We do NOT validate against the order book because these fast-moving
- * markets often show stale best-ask/bid prices that differ wildly
- * from the price the target actually traded at.
+ * BUY amounts < $1 se elevan automáticamente a $1 (mínimo Polymarket).
+ * SELL orders < 1 share se descartan (no tenemos suficientes acciones).
  */
 export async function executeTrade(
   trade: ParsedTrade,
@@ -42,7 +42,6 @@ export async function executeTrade(
     const negRisk = orderBook.neg_risk || trade.isNegRisk;
 
     // Use market's minimum_tick_size (authoritative) instead of order book tick_size.
-    // The order book sometimes returns a smaller tick_size than the market allows.
     let tickSize = orderBook.tick_size || "0.01";
     const conditionId = orderBook.market;
     if (conditionId) {
@@ -69,13 +68,13 @@ export async function executeTrade(
     // Round price to tick size
     const roundedPrice = roundToTickSize(price, tickSize);
 
-    // Calculate number of shares (may be recalculated if amount is bumped)
+    // Calculate number of shares
     let scaledShares =
       side === Side.SELL
         ? scaledAmountUsdc / trade.price
         : scaledAmountUsdc / roundedPrice;
 
-    // SELL: skip orders below 1 share
+    // SELL: skip orders below 1 share — we don't have enough tokens
     if (side === Side.SELL && scaledShares < 1) {
       logger.warn(`SELL skipped: only ${scaledShares.toFixed(2)} shares (min 1)`);
       return {
@@ -89,49 +88,125 @@ export async function executeTrade(
 
     const roundedShares = Math.floor(scaledShares * 100) / 100;
 
-    logger.copy(
-      `Placing ${side} ${roundedShares.toFixed(2)} shares @ ${roundedPrice.toFixed(4)} (${formatUsd(scaledAmountUsdc)}) [target: ${trade.price.toFixed(4)}]`
-    );
-
-    // Polymarket enforces a $1 minimum for marketable (FOK) BUY orders.
-    // Bump BUY amounts below $1 up to $1.
+    // Polymarket enforces a $1 minimum for BUY orders — bump up if needed.
+    // This is reached now that minPositionSizeUsdc defaults to 0.
     if (side === Side.BUY && scaledAmountUsdc < 1) {
       logger.info(`BUY ${formatUsd(scaledAmountUsdc)} below $1 minimum, bumping to $1.00`);
       scaledAmountUsdc = 1;
       scaledShares = scaledAmountUsdc / roundedPrice;
     }
 
-    const amount =
+    logger.copy(
+      `Placing ${side} ${roundedShares.toFixed(2)} shares @ ${roundedPrice.toFixed(4)} (${formatUsd(scaledAmountUsdc)}) [target: ${trade.price.toFixed(4)}]`
+    );
+
+    // FOK uses USDC for BUY, shares for SELL
+    const fokAmount =
       side === Side.BUY
         ? Math.floor(scaledAmountUsdc * 100) / 100
         : roundedShares;
 
-    let result: any;
+    // ── Step 1: Try FOK ──────────────────────────────────────────────────────
+    let fokResult: any;
+    try {
+      fokResult = await retryWithBackoff(async () => {
+        return await client.createAndPostMarketOrder(
+          {
+            tokenID: trade.tokenId,
+            price: roundedPrice,
+            amount: fokAmount,
+            side,
+            orderType: OrderType.FOK,
+          },
+          {
+            tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
+            negRisk,
+          },
+          OrderType.FOK
+        );
+      }, config.maxRetries);
+    } catch (fokErr) {
+      fokResult = {
+        success: false,
+        errorMsg: fokErr instanceof Error ? fokErr.message : String(fokErr),
+      };
+    }
 
-    result = await retryWithBackoff(async () => {
-      return await client.createAndPostMarketOrder(
-        {
-          tokenID: trade.tokenId,
-          price: roundedPrice,
-          amount,
-          side,
-          orderType: OrderType.FOK,
-        },
-        {
-          tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
-          negRisk: negRisk,
-        },
-        OrderType.FOK
-      );
-    }, config.maxRetries);
-
-    if (result.success) {
+    if (fokResult.success) {
       logger.success(
-        `Order filled: ${result.orderID} | ${side} @ ${roundedPrice.toFixed(4)}`
+        `[FOK] Filled: ${fokResult.orderID} | ${side} @ ${roundedPrice.toFixed(4)}`
       );
       return {
         success: true,
-        orderId: result.orderID,
+        orderId: fokResult.orderID,
+        executedAmountUsdc: scaledAmountUsdc,
+        executedPrice: roundedPrice,
+        errorMessage: null,
+      };
+    }
+
+    // ── Step 2: FOK failed — fallback to GTC with auto-cancel ────────────────
+    const ttlSec = config.gtcTtlMs / 1000;
+    logger.info(
+      `[FOK] Not filled (${fokResult.errorMsg ?? "no liquidity"}). Fallback → GTC con TTL ${ttlSec}s`
+    );
+
+    // For GTC limit orders, `size` is always in shares (conditional tokens),
+    // not in USDC. Recalculate from the (possibly bumped) scaledAmountUsdc.
+    const gtcSize =
+      side === Side.BUY
+        ? Math.floor((scaledAmountUsdc / roundedPrice) * 100) / 100
+        : roundedShares;
+
+    let gtcResult: any;
+    try {
+      const gtcOrder = await client.createOrder(
+        {
+          tokenID: trade.tokenId,
+          price: roundedPrice,
+          size: gtcSize,
+          side,
+          feeRateBps: 0,
+        },
+        {
+          tickSize: tickSize as "0.1" | "0.01" | "0.001" | "0.0001",
+          negRisk,
+        }
+      );
+
+      gtcResult = await client.postOrder(gtcOrder, OrderType.GTC);
+    } catch (gtcErr) {
+      const gtcMsg = gtcErr instanceof Error ? gtcErr.message : String(gtcErr);
+      logger.error(`[GTC] Placement error: ${gtcMsg}`);
+      return {
+        success: false,
+        orderId: null,
+        executedAmountUsdc: 0,
+        executedPrice: 0,
+        errorMessage: `FOK not filled, GTC failed: ${gtcMsg}`,
+      };
+    }
+
+    if (gtcResult.success && gtcResult.orderID) {
+      const orderId: string = gtcResult.orderID;
+      logger.info(`[GTC] Order placed: ${orderId} — auto-cancel en ${ttlSec}s`);
+
+      // Schedule auto-cancellation after TTL.
+      // If already filled, cancelOrder will return a benign error — ignored.
+      setTimeout(async () => {
+        try {
+          await client.cancelOrder({ orderID: orderId });
+          logger.info(`[GTC] Order ${orderId} cancelled after TTL (${ttlSec}s)`);
+        } catch (cancelErr) {
+          logger.debug(
+            `[GTC] Cancel ${orderId}: ${cancelErr instanceof Error ? cancelErr.message : cancelErr}`
+          );
+        }
+      }, config.gtcTtlMs);
+
+      return {
+        success: true,
+        orderId,
         executedAmountUsdc: scaledAmountUsdc,
         executedPrice: roundedPrice,
         errorMessage: null,
@@ -143,7 +218,7 @@ export async function executeTrade(
       orderId: null,
       executedAmountUsdc: 0,
       executedPrice: 0,
-      errorMessage: result.errorMsg || "Order placement failed (FOK not filled)",
+      errorMessage: gtcResult.errorMsg || "GTC order placement failed",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -45,8 +45,13 @@ export const config = {
   // Copy sizing: flat percentage of the trader's amount
   copyPercentage: parseFloat(optionalEnv("COPY_PERCENTAGE", "20")),
 
-  // Tamaño mínimo de posición — Polymarket rechaza ordenes < $1
-  minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "1")),
+  // Tamaño mínimo de posición antes de llegar al executor.
+  // Con 0, el executor aplica el bumping a $1 de Polymarket en BUYs pequeños.
+  minPositionSizeUsdc: parseFloat(optionalEnv("MIN_POSITION_SIZE_USDC", "0")),
+
+  // TTL para órdenes GTC de fallback: se auto-cancelan tras este tiempo (ms).
+  // Default: 5 minutos = 300_000 ms. Configurable via GTC_TTL_MS.
+  gtcTtlMs: parseInt(optionalEnv("GTC_TTL_MS", String(5 * 60 * 1000)), 10),
 
   // Budget guardrails
   TOTAL_BUDGET_USDC: mustNumber(optionalEnv("TOTAL_BUDGET_USDC", "100"), "TOTAL_BUDGET_USDC"),
